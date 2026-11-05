@@ -54,7 +54,7 @@ function fieldError(input, msg) {
 function setFormError(msg) { $('checkin-error').textContent = msg; $('checkin-error').hidden = !msg; }
 
 function errorMessage(e) {
-  if (e?.code === 'permission-denied') return 'Database permission denied. Publish the provided Firestore rules first.';
+  if (e?.code === 'permission-denied') return 'Firebase rejected this operation. Check that the matching Firestore rules are published, or ask the operator for help.';
   if (e?.code === 'unavailable') return 'Unable to connect. Check your internet connection and try again.';
   return e?.message || 'Something went wrong. Please try again.';
 }
@@ -147,28 +147,20 @@ $('checkin-form').addEventListener('submit', async (e) => {
     const user = await ensureVisitor();
     if (await activeVisit()) { showScreen('checkout-screen'); return; }
 
-    // One person, one active visit: a name stays locked until that visit is checked out
+    // An anonymous visitor must NOT read other visitors' name-lock records.
+    // Firestore atomically creates both documents. If a lock already exists,
+    // its update is denied and the entire batch fails (no partial check-in).
     const lockRef = vistaVisitorDb.collection('activeNames').doc(activeKey(name));
-    const lock = await lockRef.get();
-    if (lock.exists) {
-      const since = fmt.time(lock.data().since);
-      setFormError(`${name} is already checked in${since ? ` since ${since}` : ''}. Please check out first, or ask the security guard for assistance.`);
-      fieldError(nameInput, ' ');
-      nameInput.focus();
-      return;
-    }
-
     const doc = vistaVisitorDb.collection('visits').doc();
-    const now = firebase.firestore.FieldValue.serverTimestamp(); // server time, not the phone's clock
+    const now = firebase.firestore.FieldValue.serverTimestamp();
     const batch = vistaVisitorDb.batch();
     batch.set(doc, { ownerUid: user.uid, name, purpose: p, car, inAt: now, outAt: null });
     batch.set(lockRef, { visitId: doc.id, ownerUid: user.uid, name, since: now });
     try {
       await batch.commit();
     } catch (err) {
-      // Someone with the same name checked in a moment earlier
-      if (err?.code === 'permission-denied' && (await lockRef.get().catch(() => null))?.exists) {
-        setFormError(`${name} is already checked in. Please check out first, or ask the security guard for assistance.`);
+      if (err?.code === 'permission-denied') {
+        setFormError('Check-in could not be completed. This name may already be checked in. Please ask the security guard to verify the visitor list.');
         return;
       }
       throw err;
@@ -208,8 +200,9 @@ $('checkout-now').addEventListener('click', async () => {
     const batch = vistaVisitorDb.batch();
     batch.update(vistaVisitorDb.collection('visits').doc(v.id), { outAt: firebase.firestore.FieldValue.serverTimestamp() });
     const lockRef = vistaVisitorDb.collection('activeNames').doc(activeKey(v.name));
-    const lock = await lockRef.get();
-    if (lock.exists && lock.data().visitId === v.id) batch.delete(lockRef);
+    // New check-ins always have a matching lock. Delete it in the same batch
+    // without reading the lock (anonymous users cannot inspect other names).
+    batch.delete(lockRef);
     await batch.commit();
     localStorage.removeItem(ACTIVE);
     const saved = (await vistaVisitorDb.collection('visits').doc(v.id).get()).data() || {};

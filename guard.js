@@ -478,7 +478,7 @@ $('manual-form').addEventListener('submit', async (e) => {
     $('manual-success').textContent = `Saved: ${name} checked in at ${fmt.time(new Date())}.`;
     $('manual-success').hidden = false;
   } catch (err) {
-    setError('manual-error', err.code === 'permission-denied' ? 'Permission denied. Publish the firestore.rules in Firebase Console first.' : err.message);
+    setError('manual-error', err.code === 'permission-denied' ? 'Firebase rejected the check-in. This name may already be checked in, or the database rules need updating.' : err.message);
   } finally {
     manualBusy = false;
     btn.disabled = false;
