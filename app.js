@@ -146,12 +146,33 @@ $('checkin-form').addEventListener('submit', async (e) => {
   try {
     const user = await ensureVisitor();
     if (await activeVisit()) { showScreen('checkout-screen'); return; }
+
+    // One person, one active visit: a name stays locked until that visit is checked out
+    const lockRef = vistaVisitorDb.collection('activeNames').doc(activeKey(name));
+    const lock = await lockRef.get();
+    if (lock.exists) {
+      const since = fmt.time(lock.data().since);
+      setFormError(`${name} is already checked in${since ? ` since ${since}` : ''}. Please check out first, or ask the security guard for assistance.`);
+      fieldError(nameInput, ' ');
+      nameInput.focus();
+      return;
+    }
+
     const doc = vistaVisitorDb.collection('visits').doc();
-    await doc.set({
-      ownerUid: user.uid, name, purpose: p, car,
-      inAt: firebase.firestore.FieldValue.serverTimestamp(), // server time, not the phone's clock
-      outAt: null,
-    });
+    const now = firebase.firestore.FieldValue.serverTimestamp(); // server time, not the phone's clock
+    const batch = vistaVisitorDb.batch();
+    batch.set(doc, { ownerUid: user.uid, name, purpose: p, car, inAt: now, outAt: null });
+    batch.set(lockRef, { visitId: doc.id, ownerUid: user.uid, name, since: now });
+    try {
+      await batch.commit();
+    } catch (err) {
+      // Someone with the same name checked in a moment earlier
+      if (err?.code === 'permission-denied' && (await lockRef.get().catch(() => null))?.exists) {
+        setFormError(`${name} is already checked in. Please check out first, or ask the security guard for assistance.`);
+        return;
+      }
+      throw err;
+    }
     localStorage.setItem(ACTIVE, doc.id);
     const saved = await doc.get();
     const inAt = saved.data()?.inAt;
@@ -160,7 +181,6 @@ $('checkin-form').addEventListener('submit', async (e) => {
     $('summary-car').textContent = car || 'Not provided';
     $('summary-date').textContent = fmt.date(inAt) || fmt.date(new Date());
     $('summary-time').textContent = fmt.time(inAt) || fmt.time(new Date());
-    $('demo-reference').textContent = doc.id.slice(0, 8).toUpperCase();
     form.reset();
     otherWrap.hidden = true;
     showScreen('success-screen');
@@ -184,7 +204,13 @@ $('checkout-now').addEventListener('click', async () => {
     const v = await activeVisit();
     if (!v) { await updateCheckout(); return; }
     // Rules enforce: owner-only checkout, and only outAt may change from null to server time.
-    await vistaVisitorDb.collection('visits').doc(v.id).update({ outAt: firebase.firestore.FieldValue.serverTimestamp() });
+    // The name lock is released in the same write so the person can check in again next time.
+    const batch = vistaVisitorDb.batch();
+    batch.update(vistaVisitorDb.collection('visits').doc(v.id), { outAt: firebase.firestore.FieldValue.serverTimestamp() });
+    const lockRef = vistaVisitorDb.collection('activeNames').doc(activeKey(v.name));
+    const lock = await lockRef.get();
+    if (lock.exists && lock.data().visitId === v.id) batch.delete(lockRef);
+    await batch.commit();
     localStorage.removeItem(ACTIVE);
     const saved = (await vistaVisitorDb.collection('visits').doc(v.id).get()).data() || {};
     $('checkout-finished-name').textContent = v.name;

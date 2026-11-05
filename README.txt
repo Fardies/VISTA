@@ -20,4 +20,10 @@ Operator dashboard
     styled table). Needs internet to load the Excel library; offline it falls
     back to a CSV with the same title block.
 
-The saved data fields are unchanged, so firestore.rules does not need to be republished.
+One person, one active visit
+  - A name cannot check in again until that visit is checked out (from any phone,
+    browser, or the guard's walk-in form). Names are compared in capitals with
+    extra spaces removed. Check-out by the visitor or the guard releases the name.
+  - This uses a small "activeNames" collection in Firestore.
+  - IMPORTANT: publish the updated firestore.rules in Firebase Console
+    (Firestore Database > Rules > paste > Publish) or check-in will be denied.

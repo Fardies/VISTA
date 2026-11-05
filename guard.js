@@ -109,7 +109,7 @@ function render() {
         if (!confirm(`Confirm that ${v.name} has left the premises?\nCheck-out time will be recorded as now (${fmt.time(new Date())}).`)) return;
         btn.disabled = true;
         try {
-          await vistaDb.collection('visits').doc(v.id).update({ outAt: firebase.firestore.FieldValue.serverTimestamp() });
+          await checkOutVisit(v);
         } catch (e) {
           alert(`Unable to check out: ${e.message}`);
           btn.disabled = false;
@@ -119,6 +119,16 @@ function render() {
     }
     box.append(card);
   }
+}
+
+/** Check a visit out and release its name lock in one write. */
+async function checkOutVisit(v) {
+  const batch = vistaDb.batch();
+  batch.update(vistaDb.collection('visits').doc(v.id), { outAt: firebase.firestore.FieldValue.serverTimestamp() });
+  const lockRef = vistaDb.collection('activeNames').doc(activeKey(v.name));
+  const lock = await lockRef.get();
+  if (lock.exists && lock.data().visitId === v.id) batch.delete(lockRef);
+  await batch.commit();
 }
 
 // ---------- Export: date-range sheet ----------
@@ -441,18 +451,27 @@ $('manual-form').addEventListener('submit', async (e) => {
     || clean.plateError(car);
   if (problem) { setError('manual-error', problem); return; }
 
+  // One person, one active visit
   const dup = visits.find((v) => !v.outAt && v.name === name);
-  if (dup && !confirm(`${name} is already checked in since ${fmt.time(dup.inAt)}. Create another check-in anyway?`)) return;
+  const lockRef = vistaDb.collection('activeNames').doc(activeKey(name));
+  const lock = await lockRef.get();
+  if (dup || lock.exists) {
+    const since = fmt.time(dup ? dup.inAt : lock.data().since);
+    setError('manual-error', `${name} is already checked in${since ? ` since ${since}` : ''}. Check them out first using Manual Check-Out on their record.`);
+    return;
+  }
 
   manualBusy = true;
   const btn = $('manual-submit');
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
-    await vistaDb.collection('visits').doc().set({
-      ownerUid: user.uid, name, purpose: p, car,
-      inAt: firebase.firestore.FieldValue.serverTimestamp(), outAt: null, source: 'guard',
-    });
+    const doc = vistaDb.collection('visits').doc();
+    const now = firebase.firestore.FieldValue.serverTimestamp();
+    const batch = vistaDb.batch();
+    batch.set(doc, { ownerUid: user.uid, name, purpose: p, car, inAt: now, outAt: null, source: 'guard' });
+    batch.set(lockRef, { visitId: doc.id, ownerUid: user.uid, name, since: now });
+    await batch.commit();
     form.reset();
     mOtherWrap.hidden = true;
     mOther.required = false;

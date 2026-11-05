@@ -55,6 +55,26 @@ service cloud.firestore {
         && request.resource.data.outAt == request.time;
       allow delete: if false;
     }
+    // One person, one active visit.
+    // A lock document per name (e.g. AHMAD_FAIZAL_BIN_ROSLAN) exists while that person is inside.
+    // Create fails if the lock already exists, so the same name cannot check in twice.
+    match /activeNames/{key} {
+      allow get: if request.auth != null;
+      allow list: if isOperator();
+      allow create: if (isVisitor() || isOperator())
+        && request.resource.data.keys().hasOnly(['visitId','ownerUid','name','since'])
+        && request.resource.data.keys().hasAll(['visitId','ownerUid','name','since'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.since == request.time
+        && request.resource.data.visitId is string
+        && getAfter(/databases/$(database)/documents/visits/$(request.resource.data.visitId)).data.ownerUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/visits/$(request.resource.data.visitId)).data.name == request.resource.data.name
+        && getAfter(/databases/$(database)/documents/visits/$(request.resource.data.visitId)).data.outAt == null;
+      // Released at check-out by the visitor who owns it, or by the operator
+      allow delete: if isOperator()
+        || (isVisitor() && resource.data.ownerUid == request.auth.uid);
+      allow update: if false;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

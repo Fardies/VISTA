@@ -91,3 +91,8 @@ function startClock(timeEl, dateEl) {
   tick();
   return setInterval(tick, 1000);
 }
+
+/** Document id for the one-active-visit lock of a name: "RAJESH A/L MURUGAN" -> "RAJESH_A_L_MURUGAN" */
+function activeKey(name) {
+  return clean.name(name).replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 120) || 'UNKNOWN';
+}
