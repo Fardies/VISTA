@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#173c32">
+  <title>VISTA | Visitor Portal</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js" defer></script>
+  <script src="firebase-config.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="site-header"><div class="brand-mark" aria-hidden="true">V</div><div><strong>VISTA</strong><small>Visitor Information &amp; Smart Tracking Application</small></div><span class="header-tag">VISITOR PORTAL</span></header>
+  <main class="container">
+    <div class="prototype-banner" role="note">VISTA online registration · Please provide accurate visit details.</div>
+    <section id="home-screen" class="screen active" aria-labelledby="home-title">
+      <div class="hero-icon" aria-hidden="true">⌁</div>
+      <p class="eyebrow">WELCOME TO VISTA</p>
+      <h1 id="home-title">Visitor Registration</h1>
+      <p class="intro">Please select an option below to register your arrival or departure.</p>
+      <div class="action-stack"><button type="button" class="btn primary" id="checkin-open">Check In <span aria-hidden="true">→</span></button><button type="button" class="btn secondary" data-screen="checkout-screen">Check Out <span aria-hidden="true">→</span></button></div>
+      <p class="help-text">Need assistance? Please contact the security guard.</p>
+      <p class="operator-entry"><a href="guard.html" aria-label="Operator login and visitor records">Operator Login / Visitor Records →</a></p>
+    </section>
+    <section id="checkin-screen" class="screen" aria-labelledby="checkin-title" hidden>
+      <button class="back-link" type="button" data-screen="home-screen">← Back</button>
+      <p class="eyebrow">VISITOR REGISTRATION</p><h1 id="checkin-title">Check In</h1><p class="intro">Fill in your information to register your visit.</p>
+      <form id="checkin-form" novalidate>
+        <label for="visitor-name">Visitor Name <span class="required">*</span></label><input id="visitor-name" name="visitorName" type="text" autocomplete="name" maxlength="100" placeholder="Enter your full name" required>
+        <label for="visit-purpose">Purpose of Visit <span class="required">*</span></label><select id="visit-purpose" name="purpose" required><option value="">Select purpose</option><option>Meeting</option><option>Maintenance / Service</option><option>Delivery</option><option>Interview</option><option>Other</option></select>
+        <div id="other-purpose-wrap" hidden><label for="other-purpose">Please specify <span class="required">*</span></label><input id="other-purpose" name="otherPurpose" type="text" maxlength="120" placeholder="Enter purpose"></div>
+        <label for="car-plate">Car Plate Number <span class="optional">(Optional)</span></label><input id="car-plate" name="carPlate" type="text" maxlength="20" placeholder="e.g. TAA 1234" autocapitalize="characters">
+        <div class="info-panel"><span aria-hidden="true">◷</span><div><strong>Automatic Check-In</strong><p>Your check-in date and time are recorded automatically when you submit.</p></div></div>
+        <p class="form-error" id="checkin-error" role="alert" hidden></p>
+        <button type="submit" class="btn primary">Confirm Check-In <span aria-hidden="true">→</span></button>
+      </form>
+    </section>
+    <section id="success-screen" class="screen centered" aria-labelledby="success-title" hidden>
+      <div class="success-icon" aria-hidden="true">✓</div><p class="eyebrow">REGISTRATION SAVED</p><h1 id="success-title">Check-In Successful!</h1><p class="intro">Your visit has been saved online. Return using the same browser to check out.</p>
+      <div class="reference-card"><small>VISIT ID</small><strong id="demo-reference">—</strong><p>You do not need to type this ID. VISTA remembers this visit in this browser.</p></div>
+      <div class="details-card"><div><span>Name</span><strong id="summary-name"></strong></div><div><span>Purpose</span><strong id="summary-purpose"></strong></div><div><span>Car Plate</span><strong id="summary-car"></strong></div><div><span>Check-In Date &amp; Time</span><strong id="summary-time"></strong></div></div>
+      <button class="btn primary" type="button" data-screen="home-screen">Return to Home</button>
+    </section>
+    <section id="checkout-screen" class="screen" aria-labelledby="checkout-title" hidden>
+      <button class="back-link" type="button" data-screen="home-screen">← Back</button><p class="eyebrow">VISITOR DEPARTURE</p><h1 id="checkout-title">Check Out</h1>
+      <div id="checkout-known" hidden><p class="intro">We found your active visit.</p><div class="details-card"><div><span>Name</span><strong id="checkout-name"></strong></div><div><span>Check-In</span><strong id="checkout-in"></strong></div></div><button id="checkout-now" type="button" class="btn primary">Confirm Check-Out →</button></div>
+      <div id="checkout-unknown" hidden><div class="info-panel"><span>ⓘ</span><div><strong>No active visit found</strong><p>Please use the same browser you checked in with, or ask the guard for assistance. If you used a different browser or phone, please ask the guard for assistance.</p></div></div></div>
+    </section>
+    <section id="checkout-done-screen" class="screen centered" hidden><div class="success-icon">✓</div><h1>Check-Out Successful!</h1><p class="intro">Your departure was saved to the database.</p><div class="details-card"><div><span>Name</span><strong id="checkout-finished-name"></strong></div><div><span>Check-Out</span><strong id="checkout-finished-time"></strong></div></div><button class="btn primary" type="button" data-screen="home-screen">Return to Home</button></section>
+  </main>
+  <footer>VISTA · Visitor Information &amp; Smart Tracking Application</footer>
+</body>
+</html>

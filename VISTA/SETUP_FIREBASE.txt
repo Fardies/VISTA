@@ -1,0 +1,63 @@
+VISTA — COMPLETE FIREBASE SETUP
+================================
+Project: vista-4292a | Operator: operator@gmail.com
+
+IMPORTANT: The existing Firestore rules you showed deny ALL reads and writes.
+You MUST publish the included firestore.rules file before VISTA can work.
+
+1. FIREBASE CONSOLE: https://console.firebase.google.com/
+   Open VISTA > Firestore Database > Rules.
+   Replace the entire editor contents with the ENTIRE contents of firestore.rules
+   in this ZIP. Click Publish. Wait briefly for deployment.
+   This is not a local file setting: publishing in Firebase is required.
+
+2. AUTHENTICATION
+   Authentication > Sign-in method: Email/Password and Anonymous enabled.
+   Authentication > Users: operator@gmail.com already exists (as in screenshot).
+   Sign in using the password you chose for that account. Never share it.
+   The rules restrict operator access to that exact authenticated email/password
+   account. No UID copy/paste is required for this version.
+   If you use a different operator email, update it in firestore.rules AND
+   the OPERATOR_EMAIL value in guard.js; then republish rules.
+
+3. WEBSITE
+   Replace the previous VISTA files with this ZIP's VISTA folder contents.
+   Use VS Code Live Server on index.html (do not double-click file://).
+   Click Operator Login / Visitor Records to open guard.html.
+   Sign in with operator@gmail.com and your own password.
+
+4. END-TO-END TEST (fictional names first)
+   On visitor page, submit a check-in.
+   On operator dashboard, confirm the record appears automatically.
+   Return to the same visitor browser and check out.
+   Confirm the dashboard updates; try manual checkout with another test record.
+   Try filters, CSV export, and QR poster generation.
+   Verify a different email/password account cannot view visitor records.
+   Verify a visitor cannot open other visitor records.
+
+5. PUBLIC WEBSITE / QR
+   Publish to a separate GitHub Pages repo for VISTA; do not overwrite SVRS.
+   Add the actual website domain in Firebase Authentication > Settings >
+   Authorized domains if you encounter auth/unauthorized-domain.
+   Generate the QR poster using the deployed public HTTPS URL, not localhost.
+
+WHAT THIS PACKAGE DOES AND DOES NOT DO
+- Same VISTA website, two pages, one shared Firestore database.
+- Real-time operator list, login, visitor check-in/out, manual checkout, CSV.
+- Visitor checkout requires the SAME browser/session as check-in.
+- Operators can manually check out visitors who switch devices.
+- No offline mode, visitor identity verification, retention/deletion workflow,
+  or rate-limiting / abuse protection. Anonymous visitors can submit fake records.
+- For real personal data, obtain organizational approval and implement a
+  privacy notice, retention/deletion policy, backups, and operational security
+  review first. The app is FUNCTIONAL after setup but not security-certified.
+- Firebase Spark free quotas apply; no payment needed within those limits.
+
+TROUBLESHOOTING
+- Access denied: rules not published, wrong email, or not signed in.
+- Check-in denied: rules not published or Anonymous provider disabled.
+- Zero visitors: create a test visit and check internet / browser console.
+- Operator login works but dashboard denied: verify the rules in the live
+  Firebase Console, not just your local firestore.rules file.
+
+FIX: Visitor Firestore now uses vistaVisitorDb, which is associated with vistaVisitorAuth. Operator dashboard still uses vistaDb and vistaAuth.
