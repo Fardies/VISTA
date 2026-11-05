@@ -47,3 +47,37 @@ body.modal-open{overflow:hidden}
 .date-pair input:disabled{background:#f1f3f2;color:#9aa6a1}
 .export-note{margin:18px 2px 0;font-size:13px;color:#4f6a5c;min-height:20px}
 .export-note.warn{color:#a72f27}
+
+/* ---- Time, status and accuracy additions ---- */
+.mono{font-family:ui-monospace,"SF Mono",Consolas,"Liberation Mono",monospace;font-variant-numeric:tabular-nums}
+.header-clock{margin-left:auto;text-align:right;line-height:1.2}
+.header-clock b{display:block;font:700 17px/1.1 ui-monospace,"SF Mono",Consolas,monospace;font-variant-numeric:tabular-nums;letter-spacing:.5px}
+.header-clock span{display:block;font-size:10.5px;color:#c7dacf;margin-top:3px}
+.field-error{color:#a72f27;font-size:12.5px;margin:-4px 0 2px}
+input[aria-invalid=true],select[aria-invalid=true]{border-color:#c4554a;background:#fff8f7}
+.help-text.left{text-align:left;margin:0 0 16px}
+#checkin-time-preview{color:#1f5b42}
+.stats>div.stat-inside{background:#216047}
+.stats>div.stat-inside strong,.stats>div.stat-inside small{color:#fff}
+.record-card{position:relative}
+.record-card.is-in{border-left:4px solid #2e7d55}
+.record-card.is-out{border-left:4px solid #b7c5ba}
+.record-card.is-long{border-left-color:#c8892a;background:#fffaf1}
+.record-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.record-head h3{margin:0}
+.badges{display:flex;gap:6px;flex-wrap:wrap}
+.badge{font-size:10.5px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;padding:4px 8px;border-radius:99px}
+.badge.in{background:#dff0e4;color:#1d6a43}
+.badge.out{background:#eceff0;color:#5f6d66}
+.badge.warn{background:#fbe9c9;color:#8a5a12}
+.badge.guard{background:#e3ecf7;color:#2e5585}
+.time-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px;padding:10px;background:#fff;border:1px solid #e3ebe3;border-radius:10px}
+.time-strip small{display:block;font-size:10px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:#7c8b80}
+.time-strip b{display:block;font-size:16px;color:#173c32;margin:3px 0 1px}
+.time-strip span{display:block;font-size:11px;color:#7c8b80}
+@media(max-width:540px){.header-clock span{display:none}.header-clock b{font-size:14px}.time-strip b{font-size:14px}}
+
+.live-dot{display:inline-flex;align-items:center;gap:6px;margin-left:6px;font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:#2e7d55;vertical-align:middle}
+.live-dot::before{content:"";width:8px;height:8px;border-radius:50%;background:#2e7d55;box-shadow:0 0 0 0 rgba(46,125,85,.5);animation:vista-pulse 2s infinite}
+@keyframes vista-pulse{0%{box-shadow:0 0 0 0 rgba(46,125,85,.45)}70%{box-shadow:0 0 0 7px rgba(46,125,85,0)}100%{box-shadow:0 0 0 0 rgba(46,125,85,0)}}
+@media(prefers-reduced-motion:reduce){.live-dot::before{animation:none}}
