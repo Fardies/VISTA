@@ -123,12 +123,9 @@ function render() {
 
 /** Check a visit out and release its name lock in one write. */
 async function checkOutVisit(v) {
-  const batch = vistaDb.batch();
-  batch.update(vistaDb.collection('visits').doc(v.id), { outAt: firebase.firestore.FieldValue.serverTimestamp() });
-  const lockRef = vistaDb.collection('activeNames').doc(activeKey(v.name));
-  const lock = await lockRef.get();
-  if (lock.exists && lock.data().visitId === v.id) batch.delete(lockRef);
-  await batch.commit();
+  await vistaDb.collection('visits').doc(v.id).update({
+    outAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
 }
 
 // ---------- Export: date-range sheet ----------
@@ -451,34 +448,24 @@ $('manual-form').addEventListener('submit', async (e) => {
     || clean.plateError(car);
   if (problem) { setError('manual-error', problem); return; }
 
-  // One person, one active visit
-  const dup = visits.find((v) => !v.outAt && v.name === name);
-  const lockRef = vistaDb.collection('activeNames').doc(activeKey(name));
-  const lock = await lockRef.get();
-  if (dup || lock.exists) {
-    const since = fmt.time(dup ? dup.inAt : lock.data().since);
-    setError('manual-error', `${name} is already checked in${since ? ` since ${since}` : ''}. Check them out first using Manual Check-Out on their record.`);
-    return;
-  }
-
   manualBusy = true;
   const btn = $('manual-submit');
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
     const doc = vistaDb.collection('visits').doc();
-    const now = firebase.firestore.FieldValue.serverTimestamp();
-    const batch = vistaDb.batch();
-    batch.set(doc, { ownerUid: user.uid, name, purpose: p, car, inAt: now, outAt: null, source: 'guard' });
-    batch.set(lockRef, { visitId: doc.id, ownerUid: user.uid, name, since: now });
-    await batch.commit();
+    await doc.set({
+      ownerUid: user.uid, name, purpose: p, car,
+      inAt: firebase.firestore.FieldValue.serverTimestamp(),
+      outAt: null, source: 'guard'
+    });
     form.reset();
     mOtherWrap.hidden = true;
     mOther.required = false;
     $('manual-success').textContent = `Saved: ${name} checked in at ${fmt.time(new Date())}.`;
     $('manual-success').hidden = false;
   } catch (err) {
-    setError('manual-error', err.code === 'permission-denied' ? 'Firebase rejected the check-in. This name may already be checked in, or the database rules need updating.' : err.message);
+    setError('manual-error', err.code === 'permission-denied' ? 'Permission denied. Publish the firestore.rules in Firebase Console first.' : err.message);
   } finally {
     manualBusy = false;
     btn.disabled = false;
