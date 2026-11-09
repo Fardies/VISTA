@@ -41,12 +41,15 @@
     <p class="form-error" id="dashboard-error" role="alert" hidden></p>
     <h1>Operator Dashboard</h1>
     <p class="intro">Monitor arrivals and departures in real time. <span class="live-dot" aria-label="Live updates on">Live</span></p>
+    <p class="section-label" id="view-label" aria-live="polite"></p>
 
     <div class="stats">
       <div class="stat-inside"><strong id="inside">0</strong><small>Currently Inside</small></div>
       <div><strong id="outside">0</strong><small>Checked Out</small></div>
       <div><strong id="total">0</strong><small>Total Visits</small></div>
     </div>
+
+    <div class="prototype-banner" id="carry-over" role="status" hidden><span id="carry-text"></span> <button type="button" class="back-link" id="carry-toggle" style="margin:0 0 0 6px;font-weight:700;color:#735218;text-decoration:underline">Show them</button></div>
 
     <details class="manual-checkin">
       <summary>Register Walk-in Visitor <small>(guard enters visitor details)</small></summary>
@@ -73,6 +76,7 @@
         <div><label for="from">Check-in from</label><input id="from" type="date"></div>
         <div><label for="to">Check-in to</label><input id="to" type="date"></div>
       </div>
+      <p class="help-text left" style="margin:12px 0 0">Leave the dates empty to see today only. Pick dates to look at past days.</p>
     </div>
     <div class="toolbar">
       <button class="btn primary export-btn" id="export" type="button">Export to Excel</button>

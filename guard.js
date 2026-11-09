@@ -6,6 +6,7 @@ const LONG_STAY_HOURS = 8; // highlight visitors inside longer than this
 const EXCELJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
 const $ = (id) => document.getElementById(id);
 let visits = [], unsubscribe = null, authorized = false, refreshTimer = null;
+let showEarlier = false; // show visitors from earlier days who are still inside
 
 const setError = (id, msg) => { $(id).textContent = msg; $(id).hidden = !msg; };
 const squash = (s) => String(s || '').toLowerCase().replace(/\s+/g, '');
@@ -14,17 +15,51 @@ const byNewest = (a, b) => inMs(b) - inMs(a);
 
 startClock($('clock-time'), $('clock-date'));
 
-// ---------- Filtering ----------
-function filtered() {
-  const term = squash($('search').value);
-  const status = $('status').value, from = $('from').value, to = $('to').value;
+// ---------- Day scope: today only by default ----------
+const todayKey = () => fmt.dayKey(new Date());
+const customRange = () => Boolean($('from').value || $('to').value);
+
+function niceKey(k) {
+  const [y, m, d] = k.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/** Visitors from earlier days who were never checked out. */
+function earlierInside() {
+  const t = todayKey();
+  return visits.filter((v) => { const d = fmt.dayKey(v.inAt); return !v.outAt && d && d < t; });
+}
+
+/** Records for the day(s) being viewed: today, or the dates chosen in the filter. */
+function dateScoped() {
+  const from = $('from').value, to = $('to').value;
+  if (from || to) {
+    return visits.filter((v) => { const d = fmt.dayKey(v.inAt); return (!from || d >= from) && (!to || d <= to); });
+  }
+  const t = todayKey();
   return visits.filter((v) => {
+    const d = fmt.dayKey(v.inAt);
+    return !d || d === t || (showEarlier && !v.outAt && d < t);
+  });
+}
+
+function viewLabel() {
+  const from = $('from').value, to = $('to').value;
+  if (!from && !to) return `Showing today · ${fmt.longDate(new Date())}`;
+  if (from && to) return from === to ? `Showing ${niceKey(from)}` : `Showing ${niceKey(from)} – ${niceKey(to)}`;
+  return from ? `Showing from ${niceKey(from)}` : `Showing up to ${niceKey(to)}`;
+}
+
+// ---------- Filtering ----------
+function filtered(list = dateScoped()) {
+  const term = squash($('search').value);
+  const status = $('status').value;
+  return list.filter((v) => {
     // spaces ignored, so "taa1234" finds "TAA 1234"
     if (term && !squash(`${v.name} ${v.car} ${v.purpose}`).includes(term)) return false;
     if (status === 'inside' && v.outAt) return false;
     if (status === 'out' && !v.outAt) return false;
-    const d = fmt.dayKey(v.inAt);
-    return (!from || d >= from) && (!to || d <= to);
+    return true;
   }).sort(byNewest);
 }
 
@@ -49,18 +84,35 @@ function badge(text, cls) {
 
 function render() {
   const now = new Date();
-  $('total').textContent = visits.length;
-  $('inside').textContent = visits.filter((v) => !v.outAt).length;
-  $('outside').textContent = visits.filter((v) => v.outAt).length;
 
-  const matches = filtered();
+  // Earlier-day visitors still inside (only relevant in the default "today" view)
+  const earlyAll = earlierInside();
+  if (!earlyAll.length) showEarlier = false;
+  const early = customRange() ? [] : earlyAll;
+  const carry = $('carry-over');
+  carry.hidden = !early.length;
+  if (early.length) {
+    const n = early.length;
+    $('carry-text').textContent = `${n} visitor${n === 1 ? '' : 's'} from earlier days ${n === 1 ? 'is' : 'are'} still marked inside.`;
+    $('carry-toggle').textContent = showEarlier ? 'Hide them' : 'Show them';
+  }
+
+  const scoped = dateScoped();
+  $('view-label').textContent = viewLabel();
+  $('total').textContent = scoped.length;
+  $('inside').textContent = scoped.filter((v) => !v.outAt).length;
+  $('outside').textContent = scoped.filter((v) => v.outAt).length;
+
+  const matches = filtered(scoped);
   const box = $('records');
-  $('result-count').textContent = `Showing ${matches.length} of ${visits.length} visits`;
+  $('result-count').textContent = `Showing ${matches.length} of ${scoped.length} visits`;
   box.replaceChildren();
   if (!matches.length) {
     const p = document.createElement('p');
     p.className = 'help-text';
-    p.textContent = 'No matching visitor records.';
+    p.textContent = scoped.length
+      ? 'No matching visitor records.'
+      : (customRange() ? 'No visitor records in this date range.' : 'No visitors have checked in today yet.');
     box.append(p);
     return;
   }
@@ -384,7 +436,7 @@ function buildCsv(list) {
     ['No.', 'Visitor Name', 'Purpose of Visit', 'Car Plate', 'Check-In Date', 'Check-In Time', 'Check-Out Date', 'Check-Out Time', 'Time on Site', 'Status', 'Entry Type'],
     ...reportRows(list, now).map((r) => [r.no, r.name, r.purpose, r.car, r.inDate, r.inTime, r.outDate, r.outTime, r.stay, r.status, r.entry]),
   ];
-  return new Blob([`﻿${lines.map((l) => l.map(cell).join(',')).join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
+  return new Blob([`\uFEFF${lines.map((l) => l.map(cell).join(',')).join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
 }
 
 async function doExport() {
@@ -419,7 +471,10 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('expo
 // ---------- Filters ----------
 for (const id of ['search', 'status', 'from', 'to']) $(id).addEventListener(id === 'search' ? 'input' : 'change', render);
 $('refresh').addEventListener('click', () => { if (authorized) { if (unsubscribe) unsubscribe(); subscribe(); } });
-$('reset-filters').addEventListener('click', () => { for (const id of ['search', 'from', 'to']) $(id).value = ''; $('status').value = 'all'; render(); });
+$('reset-filters').addEventListener('click', () => { for (const id of ['search', 'from', 'to']) $(id).value = ''; $('status').value = 'all'; showEarlier = false; render(); });
+$('carry-toggle').addEventListener('click', () => { showEarlier = !showEarlier; render(); });
+// When the tab wakes up (e.g. next morning), re-check which day it is
+document.addEventListener('visibilitychange', () => { if (authorized && document.visibilityState === 'visible') render(); });
 
 // ---------- Walk-in check-in by guard ----------
 const mPurpose = $('manual-purpose'), mOther = $('manual-other'), mOtherWrap = $('manual-other-wrap'), mName = $('manual-name'), mCar = $('manual-car');
@@ -488,7 +543,7 @@ function subscribe() {
       ? 'Database access denied. Publish the included firestore.rules in Firebase Console → Firestore Database → Rules, then refresh.'
       : err.message);
   });
-  // Keep "Inside For" durations ticking without waiting for new data
+  // Keep "Inside For" durations ticking and roll over to the new day at midnight
   clearInterval(refreshTimer);
   refreshTimer = setInterval(() => { if (authorized && document.visibilityState === 'visible') render(); }, 30000);
 }
