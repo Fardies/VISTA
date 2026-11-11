@@ -2,9 +2,9 @@
 // VISTA visitor portal: Firebase anonymous auth.
 // The visitor only REGISTERS. The security guard completes check-in and check-out.
 // Saved per registration: ownerUid, name, purpose, car, status ('pending'), createdAt,
-// inAt (null until the guard checks the visitor in), outAt (null), faceConsent.
+// inAt (null until the guard checks the visitor in), outAt (null), faceConsent (the tick box: true or false).
+// One phone can register many visits (for example for workers who have no phone).
 
-const LAST_VISIT = 'vista_last_visit_v2';
 const $ = (id) => document.getElementById(id);
 const screens = [...document.querySelectorAll('.screen')];
 let currentUser = null;
@@ -66,22 +66,6 @@ async function ensureVisitor() {
   return currentUser;
 }
 
-/** The registration this browser made earlier, if it is still open (pending or checked in). */
-async function lastVisit() {
-  const id = localStorage.getItem(LAST_VISIT);
-  if (!id) return null;
-  const user = await ensureVisitor();
-  const snap = await vistaVisitorDb.collection('visits').doc(id).get();
-  if (!snap.exists) { localStorage.removeItem(LAST_VISIT); return null; }
-  const v = { id: snap.id, ...snap.data() };
-  // Checked out, cancelled, or not ours: forget it so a new registration is possible
-  if (v.ownerUid !== user.uid || v.status === 'out' || v.status === 'cancelled') {
-    localStorage.removeItem(LAST_VISIT);
-    return null;
-  }
-  return v;
-}
-
 /** Fill the confirmation screen from a visit document. */
 function showSummary(v) {
   const checkedIn = v.status === 'in';
@@ -99,13 +83,10 @@ function showSummary(v) {
   showScreen('success-screen');
 }
 
-// Open the form, or show the earlier registration if this phone already has an open one
-$('checkin-open').addEventListener('click', async () => {
-  try {
-    const v = await lastVisit();
-    if (v) showSummary(v);
-    else { showScreen('checkin-screen'); nameInput.focus(); }
-  } catch (e) { alert(errorMessage(e)); }
+// Open a fresh form. This phone can register as many visits as needed.
+$('checkin-open').addEventListener('click', () => {
+  showScreen('checkin-screen');
+  nameInput.focus();
 });
 
 // ---------- Registration ----------
@@ -138,9 +119,6 @@ $('checkin-form').addEventListener('submit', async (e) => {
   btn.textContent = 'Saving…';
   try {
     const user = await ensureVisitor();
-    const existing = await lastVisit();
-    if (existing) { showSummary(existing); return; }
-
     // Registration only: status "pending", no check-in time yet.
     const doc = vistaVisitorDb.collection('visits').doc();
     await doc.set({
@@ -148,9 +126,8 @@ $('checkin-form').addEventListener('submit', async (e) => {
       status: 'pending',
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       inAt: null, outAt: null,
-      faceConsent: faceConsent.checked
+      faceConsent: faceConsent.checked === true   // the tick box: true only if the visitor ticked it
     });
-    localStorage.setItem(LAST_VISIT, doc.id);
     const saved = await doc.get();
     showSummary({ id: doc.id, ...saved.data() });
     form.reset();
