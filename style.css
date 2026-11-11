@@ -128,3 +128,19 @@ input[aria-invalid=true],select[aria-invalid=true]{border-color:#c4554a;backgrou
 .face-note{font-size:11.5px;color:#7c8b80;line-height:1.5;margin:16px 0 0;text-align:center}
 .face-sheet .form-error{margin:0 0 10px}
 .btn:disabled{opacity:.45;cursor:not-allowed}
+
+/* ---- Mobile date fields fix (iPhone/Android): keep the two date boxes inside their columns ---- */
+.filter-grid>div,.date-pair>div{min-width:0}
+.date-pair{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+input[type=date]{
+  -webkit-appearance:none;appearance:none;
+  display:block;width:100%;min-width:0;max-width:100%;
+  min-height:48px;text-align:left;line-height:1.3;
+}
+input[type=date]::-webkit-date-and-time-value{text-align:left;min-height:1.3em;margin:0}
+input[type=date]::-webkit-calendar-picker-indicator{opacity:.6}
+.date-pair input[type=date]{min-height:54px}
+@media(max-width:380px){
+  .date-pair,.filter-grid{gap:10px}
+  input[type=date]{padding-left:10px;padding-right:10px;font-size:15px}
+}
