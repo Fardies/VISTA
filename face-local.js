@@ -10,7 +10,7 @@ const FaceLocal = (() => {
   const STORE_KEY = 'vista_face_local_v1';
   const LOG_KEY = 'vista_face_testlog_v1';
   const RETENTION_MS = 24 * 3600e3;
-  const MATCH = { threshold: 0.65, margin: 0.08 }; // keep in step with functions/lib.js
+  const MATCH = { threshold: 0.78, margin: 0.08 }; // keep in step with functions/lib.js
 
   // ---------- Storage (fails safely if the browser blocks storage) ----------
   function read(key, fallback) {
