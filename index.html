@@ -65,24 +65,9 @@
         <input id="car-plate" name="carPlate" type="text" maxlength="20" placeholder="e.g. TAA 1234" autocapitalize="characters" autocomplete="off" aria-describedby="car-plate-error">
         <p class="field-error" id="car-plate-error" hidden></p>
 
-        <div class="info-panel">
-          <span aria-hidden="true">◷</span>
-          <div>
-            <strong>Check-in is completed by the guard</strong>
-            <p>Your check-in time is recorded when the security guard confirms your arrival, not when you submit this form.</p>
-          </div>
-        </div>
-
-        <div class="info-panel consent-panel">
-          <span aria-hidden="true">◉</span>
-          <div>
-            <strong>Face check-in (optional)</strong>
-            <p>The guard can check you in and out by scanning your face. No photo is saved: your face is stored only as an encrypted numeric template, used only for this visit, and deleted when you check out (or within 24 hours at most). If you do not agree, the guard will check you in and out manually.</p>
-          </div>
-        </div>
         <label class="check-row" for="face-consent">
           <input id="face-consent" name="faceConsent" type="checkbox">
-          <span>I agree to face recognition for this visit.</span>
+          <span>I agree to a face scan for check-in and check-out.</span>
         </label>
 
         <p class="form-error" id="checkin-error" role="alert" hidden></p>

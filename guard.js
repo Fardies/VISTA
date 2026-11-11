@@ -374,7 +374,7 @@ function reportRows(list, now) {
       outTime: v.outAt ? fmt.time(v.outAt) : '—',
       stay: v.outAt ? fmt.duration(ms) : `${fmt.duration(ms)} (inside)`,
       status: v.outAt ? 'Checked Out' : 'Inside',
-      entry: v.source === 'guard' ? 'Walk-in (guard)' : (String(v.checkInMethod || '').startsWith('face') ? 'Online registration · Face' : 'Online registration'),
+      entry: v.source === 'guard' ? 'Walk-in (guard)' : 'Online registration',
     };
   });
 }
