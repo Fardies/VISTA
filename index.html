@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#173c32">
-  <title>VISTA | Visitor Portal</title>
+  <title>VISTA | Visitor Registration</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js" defer></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js" defer></script>
@@ -26,10 +26,9 @@
       <div class="hero-icon" aria-hidden="true">⌁</div>
       <p class="eyebrow">WELCOME TO VISTA</p>
       <h1 id="home-title">Visitor Registration</h1>
-      <p class="intro">Please select an option below to register your arrival or departure.</p>
+      <p class="intro">Register your visit here, then go to the security guard to complete your check-in. The guard will also check you out when you leave.</p>
       <div class="action-stack">
-        <button type="button" class="btn primary" id="checkin-open">Check In <span aria-hidden="true">→</span></button>
-        <button type="button" class="btn secondary" data-screen="checkout-screen">Check Out <span aria-hidden="true">→</span></button>
+        <button type="button" class="btn primary" id="checkin-open">Register Visit <span aria-hidden="true">→</span></button>
       </div>
       <p class="help-text">Need assistance? Please contact the security guard.</p>
       <p class="operator-entry"><a href="guard.html" aria-label="Operator login and visitor records">Operator Login / Visitor Records →</a></p>
@@ -38,8 +37,8 @@
     <section id="checkin-screen" class="screen" aria-labelledby="checkin-title" hidden>
       <button class="back-link" type="button" data-screen="home-screen">← Back</button>
       <p class="eyebrow">VISITOR REGISTRATION</p>
-      <h1 id="checkin-title">Check In</h1>
-      <p class="intro">Fill in your information to register your visit.</p>
+      <h1 id="checkin-title">Register Your Visit</h1>
+      <p class="intro">Fill in your information. After you submit, please go to the security guard to complete your check-in.</p>
       <form id="checkin-form" novalidate>
         <label for="visitor-name">Visitor Name <span class="required">*</span></label>
         <input id="visitor-name" name="visitorName" type="text" autocomplete="name" maxlength="100" placeholder="Full name as in IC" required aria-describedby="visitor-name-error">
@@ -69,65 +68,44 @@
         <div class="info-panel">
           <span aria-hidden="true">◷</span>
           <div>
-            <strong>Automatic Check-In Time</strong>
-            <p>Your check-in time is recorded by the server when you submit. Current time: <b id="checkin-time-preview" class="mono">--:--</b></p>
+            <strong>Check-in is completed by the guard</strong>
+            <p>Your check-in time is recorded when the security guard confirms your arrival, not when you submit this form.</p>
           </div>
         </div>
+
+        <div class="info-panel consent-panel">
+          <span aria-hidden="true">◉</span>
+          <div>
+            <strong>Face check-in (optional)</strong>
+            <p>The guard can check you in and out by scanning your face. Your face is saved only as a numeric template, not as a photo. It is used only for this visit and deleted when you check out. If you do not agree, the guard will check you in and out manually.</p>
+          </div>
+        </div>
+        <label class="check-row" for="face-consent">
+          <input id="face-consent" name="faceConsent" type="checkbox">
+          <span>I agree to face recognition for this visit.</span>
+        </label>
+
         <p class="form-error" id="checkin-error" role="alert" hidden></p>
-        <button type="submit" class="btn primary">Confirm Check-In <span aria-hidden="true">→</span></button>
+        <button type="submit" class="btn primary">Submit Registration <span aria-hidden="true">→</span></button>
       </form>
     </section>
 
     <section id="success-screen" class="screen centered" aria-labelledby="success-title" hidden>
       <div class="success-icon" aria-hidden="true">✓</div>
-      <p class="eyebrow">REGISTRATION SAVED</p>
-      <h1 id="success-title">Check-In Successful!</h1>
-      <p class="intro">Your visit has been saved. Use this same browser to check out before you leave.</p>
+      <p class="eyebrow" id="success-eyebrow">REGISTRATION RECEIVED</p>
+      <h1 id="success-title">Registration Submitted</h1>
+      <p class="intro" id="success-intro">Please go to the security guard to complete your check-in. You are not checked in until the guard confirms it.</p>
       <div class="details-card">
         <div><span>Name</span><strong id="summary-name"></strong></div>
         <div><span>Purpose</span><strong id="summary-purpose"></strong></div>
         <div><span>Car Plate</span><strong id="summary-car"></strong></div>
-        <div><span>Check-In Date</span><strong id="summary-date"></strong></div>
-        <div><span>Check-In Time</span><strong id="summary-time" class="mono"></strong></div>
-      </div>
-      <button class="btn primary" type="button" data-screen="home-screen">Return to Home</button>
-    </section>
-
-    <section id="checkout-screen" class="screen" aria-labelledby="checkout-title" hidden>
-      <button class="back-link" type="button" data-screen="home-screen">← Back</button>
-      <p class="eyebrow">VISITOR DEPARTURE</p>
-      <h1 id="checkout-title">Check Out</h1>
-      <p class="help-text left" id="checkout-loading">Looking for your visit…</p>
-      <div id="checkout-known" hidden>
-        <p class="intro">We found your active visit.</p>
-        <div class="details-card">
-          <div><span>Name</span><strong id="checkout-name"></strong></div>
-          <div><span>Purpose</span><strong id="checkout-purpose"></strong></div>
-          <div><span>Car Plate</span><strong id="checkout-car"></strong></div>
-          <div><span>Checked In</span><strong id="checkout-in"></strong></div>
-          <div><span>Time on Site</span><strong id="checkout-stay" class="mono"></strong></div>
-        </div>
-        <button id="checkout-now" type="button" class="btn primary">Confirm Check-Out →</button>
-      </div>
-      <div id="checkout-unknown" hidden>
-        <div class="info-panel"><span>ⓘ</span><div><strong>No active visit found</strong><p>Please use the same browser you checked in with. If you used a different browser or phone, please ask the security guard for assistance.</p></div></div>
-      </div>
-    </section>
-
-    <section id="checkout-done-screen" class="screen centered" hidden>
-      <div class="success-icon">✓</div>
-      <p class="eyebrow">THANK YOU</p>
-      <h1>Check-Out Successful!</h1>
-      <p class="intro">Your departure has been recorded. Have a safe journey.</p>
-      <div class="details-card">
-        <div><span>Name</span><strong id="checkout-finished-name"></strong></div>
-        <div><span>Checked In</span><strong id="checkout-finished-in"></strong></div>
-        <div><span>Checked Out</span><strong id="checkout-finished-time"></strong></div>
-        <div><span>Total Time on Site</span><strong id="checkout-finished-stay" class="mono"></strong></div>
+        <div><span>Registered</span><strong id="summary-registered"></strong></div>
+        <div><span>Check-In Method</span><strong id="summary-method"></strong></div>
+        <div><span>Status</span><strong id="summary-status"></strong></div>
       </div>
       <button class="btn primary" type="button" data-screen="home-screen">Return to Home</button>
     </section>
   </main>
-  <footer>&copy; 2026 CDC Technologies Sdn Bhd · VISTA Visitor Information &amp; Smart Tracking Application</footer>
+  <footer>VISTA · Visitor Information &amp; Smart Tracking Application</footer>
 </body>
 </html>

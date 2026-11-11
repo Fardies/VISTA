@@ -1,26 +1,24 @@
 'use strict';
-// VISTA visitor portal: Firebase anonymous auth; each visitor can access ONLY their own visits.
-// Data saved per visit is unchanged: ownerUid, name, purpose, car, inAt, outAt.
+// VISTA visitor portal: Firebase anonymous auth.
+// The visitor only REGISTERS. The security guard completes check-in and check-out.
+// Saved per registration: ownerUid, name, purpose, car, status ('pending'), createdAt,
+// inAt (null until the guard checks the visitor in), outAt (null), faceConsent.
 
-const ACTIVE = 'vista_firebase_active_v1';
+const LAST_VISIT = 'vista_last_visit_v2';
 const $ = (id) => document.getElementById(id);
 const screens = [...document.querySelectorAll('.screen')];
 let currentUser = null;
 let busy = false;
-let stayTimer = null;
 
 // ---------- Screens ----------
 function showScreen(id) {
   screens.forEach((s) => { s.hidden = s.id !== id; s.classList.toggle('active', s.id === id); });
-  clearInterval(stayTimer);
-  if (id === 'checkout-screen') updateCheckout();
   window.scrollTo(0, 0);
 }
 document.querySelectorAll('[data-screen]').forEach((b) => b.addEventListener('click', () => showScreen(b.dataset.screen)));
 
 // ---------- Live clock ----------
 startClock($('clock-time'), $('clock-date'));
-startClock($('checkin-time-preview'));
 
 // ---------- Form helpers ----------
 const purpose = $('visit-purpose');
@@ -28,6 +26,7 @@ const other = $('other-purpose');
 const otherWrap = $('other-purpose-wrap');
 const nameInput = $('visitor-name');
 const carInput = $('car-plate');
+const faceConsent = $('face-consent');
 
 purpose.addEventListener('change', () => {
   otherWrap.hidden = purpose.value !== 'Other';
@@ -67,55 +66,49 @@ async function ensureVisitor() {
   return currentUser;
 }
 
-async function activeVisit() {
-  const id = localStorage.getItem(ACTIVE);
+/** The registration this browser made earlier, if it is still open (pending or checked in). */
+async function lastVisit() {
+  const id = localStorage.getItem(LAST_VISIT);
   if (!id) return null;
   const user = await ensureVisitor();
   const snap = await vistaVisitorDb.collection('visits').doc(id).get();
-  if (!snap.exists) { localStorage.removeItem(ACTIVE); return null; }
+  if (!snap.exists) { localStorage.removeItem(LAST_VISIT); return null; }
   const v = { id: snap.id, ...snap.data() };
-  // Checked out already (by the visitor or manually by the guard): forget it
-  if (v.ownerUid !== user.uid || v.outAt) { localStorage.removeItem(ACTIVE); return null; }
+  // Checked out, cancelled, or not ours: forget it so a new registration is possible
+  if (v.ownerUid !== user.uid || v.status === 'out' || v.status === 'cancelled') {
+    localStorage.removeItem(LAST_VISIT);
+    return null;
+  }
   return v;
 }
 
-// ---------- Check-out screen ----------
-async function updateCheckout() {
-  const known = $('checkout-known');
-  const unknown = $('checkout-unknown');
-  known.hidden = true;
-  unknown.hidden = true;
-  $('checkout-loading').hidden = false;
-  try {
-    const v = await activeVisit();
-    known.hidden = !v;
-    unknown.hidden = !!v;
-    if (v) {
-      $('checkout-name').textContent = v.name;
-      $('checkout-purpose').textContent = v.purpose;
-      $('checkout-car').textContent = v.car || 'Not provided';
-      $('checkout-in').textContent = fmt.dateTime(v.inAt);
-      const paint = () => { $('checkout-stay').textContent = fmt.duration(stayMs(v)); };
-      paint();
-      clearInterval(stayTimer);
-      stayTimer = setInterval(paint, 15000);
-    }
-  } catch (e) {
-    unknown.hidden = false;
-    unknown.querySelector('p').textContent = errorMessage(e);
-  } finally {
-    $('checkout-loading').hidden = true;
-  }
+/** Fill the confirmation screen from a visit document. */
+function showSummary(v) {
+  const checkedIn = v.status === 'in';
+  $('success-eyebrow').textContent = checkedIn ? 'CHECKED IN' : 'REGISTRATION RECEIVED';
+  $('success-title').textContent = checkedIn ? 'You Are Checked In' : 'Registration Submitted';
+  $('success-intro').textContent = checkedIn
+    ? 'The security guard will check you out when you leave.'
+    : 'Please go to the security guard to complete your check-in. You are not checked in until the guard confirms it.';
+  $('summary-name').textContent = v.name;
+  $('summary-purpose').textContent = v.purpose;
+  $('summary-car').textContent = v.car || 'Not provided';
+  $('summary-registered').textContent = fmt.dateTime(v.createdAt) || fmt.dateTime(new Date());
+  $('summary-method').textContent = v.faceConsent ? 'Face scan by guard' : 'Manual by guard';
+  $('summary-status').textContent = checkedIn ? `Checked in at ${fmt.time(v.inAt)}` : 'Pending check-in';
+  showScreen('success-screen');
 }
 
+// Open the form, or show the earlier registration if this phone already has an open one
 $('checkin-open').addEventListener('click', async () => {
   try {
-    if (await activeVisit()) showScreen('checkout-screen');
+    const v = await lastVisit();
+    if (v) showSummary(v);
     else { showScreen('checkin-screen'); nameInput.focus(); }
   } catch (e) { alert(errorMessage(e)); }
 });
 
-// ---------- Check-in ----------
+// ---------- Registration ----------
 $('checkin-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (busy) return;
@@ -145,61 +138,29 @@ $('checkin-form').addEventListener('submit', async (e) => {
   btn.textContent = 'Saving…';
   try {
     const user = await ensureVisitor();
-    if (await activeVisit()) { showScreen('checkout-screen'); return; }
+    const existing = await lastVisit();
+    if (existing) { showSummary(existing); return; }
 
-    // Save the visit only. No shared name lock or duplicate-name lookup.
+    // Registration only: status "pending", no check-in time yet.
     const doc = vistaVisitorDb.collection('visits').doc();
     await doc.set({
       ownerUid: user.uid, name, purpose: p, car,
-      inAt: firebase.firestore.FieldValue.serverTimestamp(), outAt: null
+      status: 'pending',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      inAt: null, outAt: null,
+      faceConsent: faceConsent.checked
     });
-    localStorage.setItem(ACTIVE, doc.id);
+    localStorage.setItem(LAST_VISIT, doc.id);
     const saved = await doc.get();
-    const inAt = saved.data()?.inAt;
-    $('summary-name').textContent = name;
-    $('summary-purpose').textContent = p;
-    $('summary-car').textContent = car || 'Not provided';
-    $('summary-date').textContent = fmt.date(inAt) || fmt.date(new Date());
-    $('summary-time').textContent = fmt.time(inAt) || fmt.time(new Date());
+    showSummary({ id: doc.id, ...saved.data() });
     form.reset();
     otherWrap.hidden = true;
-    showScreen('success-screen');
   } catch (err) {
     setFormError(errorMessage(err));
   } finally {
     busy = false;
     btn.disabled = false;
-    btn.innerHTML = 'Confirm Check-In <span aria-hidden="true">→</span>';
-  }
-});
-
-// ---------- Check-out ----------
-$('checkout-now').addEventListener('click', async () => {
-  if (busy) return;
-  busy = true;
-  const btn = $('checkout-now');
-  btn.disabled = true;
-  btn.textContent = 'Saving check-out…';
-  try {
-    const v = await activeVisit();
-    if (!v) { await updateCheckout(); return; }
-    // Only the visitor's own visit is updated.
-    await vistaVisitorDb.collection('visits').doc(v.id).update({
-      outAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    localStorage.removeItem(ACTIVE);
-    const saved = (await vistaVisitorDb.collection('visits').doc(v.id).get()).data() || {};
-    $('checkout-finished-name').textContent = v.name;
-    $('checkout-finished-in').textContent = fmt.dateTime(saved.inAt || v.inAt);
-    $('checkout-finished-time').textContent = fmt.dateTime(saved.outAt) || fmt.dateTime(new Date());
-    $('checkout-finished-stay').textContent = fmt.duration(stayMs({ inAt: saved.inAt || v.inAt, outAt: saved.outAt || new Date() }));
-    showScreen('checkout-done-screen');
-  } catch (err) {
-    alert(errorMessage(err));
-  } finally {
-    busy = false;
-    btn.disabled = false;
-    btn.textContent = 'Confirm Check-Out →';
+    btn.innerHTML = 'Submit Registration <span aria-hidden="true">→</span>';
   }
 });
 

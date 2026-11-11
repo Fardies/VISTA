@@ -10,8 +10,16 @@ let showEarlier = false; // show visitors from earlier days who are still inside
 
 const setError = (id, msg) => { $(id).textContent = msg; $(id).hidden = !msg; };
 const squash = (s) => String(s || '').toLowerCase().replace(/\s+/g, '');
-const inMs = (v) => (toDate(v.inAt) ? toDate(v.inAt).getTime() : 0);
-const byNewest = (a, b) => inMs(b) - inMs(a);
+const sortMs = (v) => { const d = toDate(v.inAt || v.createdAt); return d ? d.getTime() : 0; };
+const byNewest = (a, b) => sortMs(b) - sortMs(a);
+
+// ---------- Visit state ----------
+/** 'pending' | 'in' | 'out' | 'cancelled'. Visits made before the face upgrade have no status. */
+const state = (v) => (v.status === 'pending' ? 'pending' : v.status === 'cancelled' ? 'cancelled' : (v.outAt ? 'out' : 'in'));
+const isVisit = (v) => state(v) === 'in' || state(v) === 'out'; // pending and cancelled are not visits yet
+const isOpen = (v) => state(v) === 'in' || state(v) === 'pending';
+/** Day of check-in, or day of registration while still pending (YYYY-MM-DD, Malaysia time) */
+const visitDay = (v) => fmt.dayKey(v.inAt || v.createdAt);
 
 startClock($('clock-time'), $('clock-date'));
 
@@ -24,22 +32,28 @@ function niceKey(k) {
   return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-/** Visitors from earlier days who were never checked out. */
-function earlierInside() {
+/** Visitors from earlier days who are still inside, or registered but were never checked in. */
+function earlierOpen() {
   const t = todayKey();
-  return visits.filter((v) => { const d = fmt.dayKey(v.inAt); return !v.outAt && d && d < t; });
+  return visits.filter((v) => { const d = visitDay(v); return isOpen(v) && d && d < t; });
+}
+
+/** Registrations made today that are waiting for the guard (first come, first served). */
+function pendingToday() {
+  const t = todayKey();
+  return visits.filter((v) => state(v) === 'pending' && visitDay(v) === t).sort((a, b) => sortMs(a) - sortMs(b));
 }
 
 /** Records for the day(s) being viewed: today, or the dates chosen in the filter. */
 function dateScoped() {
   const from = $('from').value, to = $('to').value;
   if (from || to) {
-    return visits.filter((v) => { const d = fmt.dayKey(v.inAt); return (!from || d >= from) && (!to || d <= to); });
+    return visits.filter((v) => { const d = visitDay(v); return (!from || d >= from) && (!to || d <= to); });
   }
   const t = todayKey();
   return visits.filter((v) => {
-    const d = fmt.dayKey(v.inAt);
-    return !d || d === t || (showEarlier && !v.outAt && d < t);
+    const d = visitDay(v);
+    return !d || d === t || (showEarlier && isOpen(v) && d < t);
   });
 }
 
@@ -51,15 +65,16 @@ function viewLabel() {
 }
 
 // ---------- Filtering ----------
+const STATUS_MAP = { pending: 'pending', inside: 'in', out: 'out', cancelled: 'cancelled' };
+
 function filtered(list = dateScoped()) {
   const term = squash($('search').value);
   const status = $('status').value;
   return list.filter((v) => {
     // spaces ignored, so "taa1234" finds "TAA 1234"
     if (term && !squash(`${v.name} ${v.car} ${v.purpose}`).includes(term)) return false;
-    if (status === 'inside' && v.outAt) return false;
-    if (status === 'out' && !v.outAt) return false;
-    return true;
+    if (status === 'all') return state(v) !== 'cancelled'; // cancelled registrations show only when chosen
+    return state(v) === STATUS_MAP[status];
   }).sort(byNewest);
 }
 
@@ -82,58 +97,51 @@ function badge(text, cls) {
   return b;
 }
 
-function render() {
-  const now = new Date();
+/** A button that asks for confirmation, runs an action, and re-enables itself on failure. */
+function actionButton(label, cls, confirmText, action) {
+  const btn = document.createElement('button');
+  btn.className = `btn ${cls}`;
+  btn.type = 'button';
+  btn.textContent = label;
+  btn.addEventListener('click', async () => {
+    if (!confirm(confirmText())) return;
+    btn.disabled = true;
+    try {
+      await action();
+    } catch (e) {
+      alert(`Unable to complete this action: ${e.message}`);
+      btn.disabled = false;
+    }
+  });
+  return btn;
+}
 
-  // Earlier-day visitors still inside (only relevant in the default "today" view)
-  const earlyAll = earlierInside();
-  if (!earlyAll.length) showEarlier = false;
-  const early = customRange() ? [] : earlyAll;
-  const carry = $('carry-over');
-  carry.hidden = !early.length;
-  if (early.length) {
-    const n = early.length;
-    $('carry-text').textContent = `${n} visitor${n === 1 ? '' : 's'} from earlier days ${n === 1 ? 'is' : 'are'} still marked inside.`;
-    $('carry-toggle').textContent = showEarlier ? 'Hide them' : 'Show them';
-  }
+function buildCard(v, now) {
+  const st = state(v);
+  const ms = stayMs(v, now);
+  const long = st === 'in' && ms != null && ms > LONG_STAY_HOURS * 3600e3;
+  const card = document.createElement('article');
+  card.className = `record-card ${st === 'pending' ? 'is-pending' : (st === 'in' ? 'is-in' : 'is-out')}${long ? ' is-long' : ''}`;
 
-  const scoped = dateScoped();
-  $('view-label').textContent = viewLabel();
-  $('total').textContent = scoped.length;
-  $('inside').textContent = scoped.filter((v) => !v.outAt).length;
-  $('outside').textContent = scoped.filter((v) => v.outAt).length;
+  const head = document.createElement('div');
+  head.className = 'record-head';
+  const h = document.createElement('h3');
+  h.textContent = v.name;
+  const tags = document.createElement('div');
+  tags.className = 'badges';
+  if (st === 'pending') tags.append(badge('Pending Check-In', 'pending'));
+  else if (st === 'cancelled') tags.append(badge('Cancelled', 'out'));
+  else tags.append(badge(st === 'out' ? 'Checked Out' : 'Inside', st === 'out' ? 'out' : 'in'));
+  if (long) tags.append(badge(`Over ${LONG_STAY_HOURS}h`, 'warn'));
+  if (v.source === 'guard') tags.append(badge('Walk-in', 'guard'));
+  if (st === 'pending') tags.append(badge(v.faceConsent ? 'Face check-in' : 'Manual only', v.faceConsent ? 'guard' : 'out'));
+  head.append(h, tags);
 
-  const matches = filtered(scoped);
-  const box = $('records');
-  $('result-count').textContent = `Showing ${matches.length} of ${scoped.length} visits`;
-  box.replaceChildren();
-  if (!matches.length) {
-    const p = document.createElement('p');
-    p.className = 'help-text';
-    p.textContent = scoped.length
-      ? 'No matching visitor records.'
-      : (customRange() ? 'No visitor records in this date range.' : 'No visitors have checked in today yet.');
-    box.append(p);
-    return;
-  }
+  card.append(head, row('Purpose of Visit', v.purpose || '—'), row('Car Plate Number', v.car || '—', 'mono'));
 
-  for (const v of matches) {
-    const ms = stayMs(v, now);
-    const long = !v.outAt && ms > LONG_STAY_HOURS * 3600e3;
-    const card = document.createElement('article');
-    card.className = `record-card ${v.outAt ? 'is-out' : 'is-in'}${long ? ' is-long' : ''}`;
-
-    const head = document.createElement('div');
-    head.className = 'record-head';
-    const h = document.createElement('h3');
-    h.textContent = v.name;
-    const tags = document.createElement('div');
-    tags.className = 'badges';
-    tags.append(badge(v.outAt ? 'Checked Out' : 'Inside', v.outAt ? 'out' : 'in'));
-    if (long) tags.append(badge(`Over ${LONG_STAY_HOURS}h`, 'warn'));
-    if (v.source === 'guard') tags.append(badge('Walk-in', 'guard'));
-    head.append(h, tags);
-
+  if (st === 'pending' || st === 'cancelled') {
+    card.append(row('Registered', `${fmt.time(v.createdAt) || '—'} · ${fmt.date(v.createdAt)}`));
+  } else {
     const times = document.createElement('div');
     times.className = 'time-strip';
     const cell = (label, big, small) => {
@@ -147,38 +155,102 @@ function render() {
     times.append(
       cell('Check-In', fmt.time(v.inAt) || '—', fmt.date(v.inAt)),
       cell('Check-Out', fmt.time(v.outAt) || '—', v.outAt ? fmt.date(v.outAt) : 'Still inside'),
-      cell(v.outAt ? 'Time on Site' : 'Inside For', fmt.duration(ms), v.outAt ? '' : 'and counting'),
+      cell(st === 'out' ? 'Time on Site' : 'Inside For', fmt.duration(ms), st === 'out' ? '' : 'and counting'),
     );
-
-    card.append(head, row('Purpose of Visit', v.purpose || '—'), row('Car Plate Number', v.car || '—', 'mono'), times);
-
-    if (!v.outAt) {
-      const btn = document.createElement('button');
-      btn.className = 'btn secondary';
-      btn.type = 'button';
-      btn.textContent = 'Manual Check-Out';
-      btn.addEventListener('click', async () => {
-        if (!confirm(`Confirm that ${v.name} has left the premises?\nCheck-out time will be recorded as now (${fmt.time(new Date())}).`)) return;
-        btn.disabled = true;
-        try {
-          await checkOutVisit(v);
-        } catch (e) {
-          alert(`Unable to check out: ${e.message}`);
-          btn.disabled = false;
-        }
-      });
-      card.append(btn);
-    }
-    box.append(card);
+    card.append(times);
   }
+
+  if (st === 'pending') {
+    card.append(
+      actionButton('Check In', 'primary',
+        () => `Check in ${v.name}?\nCheck-in time will be recorded as now (${fmt.time(new Date())}).`,
+        () => checkInVisit(v)),
+      actionButton('Cancel Registration', 'secondary',
+        () => `Cancel the registration for ${v.name}?\nThis visitor will not be checked in.`,
+        () => cancelVisit(v)),
+    );
+  } else if (st === 'in') {
+    card.append(actionButton('Manual Check-Out', 'secondary',
+      () => `Confirm that ${v.name} has left the premises?\nCheck-out time will be recorded as now (${fmt.time(new Date())}).`,
+      () => checkOutVisit(v)));
+  }
+  return card;
 }
 
-/** Check a visit out and release its name lock in one write. */
-async function checkOutVisit(v) {
-  await vistaDb.collection('visits').doc(v.id).update({
-    outAt: firebase.firestore.FieldValue.serverTimestamp()
-  });
+function render() {
+  const now = new Date();
+
+  // Earlier-day visitors still open (only relevant in the default "today" view)
+  const earlyAll = earlierOpen();
+  if (!earlyAll.length) showEarlier = false;
+  const early = customRange() ? [] : earlyAll;
+  const carry = $('carry-over');
+  carry.hidden = !early.length;
+  if (early.length) {
+    const inside = early.filter((v) => state(v) === 'in').length;
+    const waiting = early.length - inside;
+    const parts = [];
+    if (inside) parts.push(`${inside} visitor${inside === 1 ? '' : 's'} still marked inside`);
+    if (waiting) parts.push(`${waiting} registration${waiting === 1 ? '' : 's'} never checked in`);
+    $('carry-text').textContent = `From earlier days: ${parts.join(' and ')}.`;
+    $('carry-toggle').textContent = showEarlier ? 'Hide them' : 'Show them';
+  }
+
+  const scoped = dateScoped();
+  const count = (s) => scoped.filter((v) => state(v) === s).length;
+  const nIn = count('in'), nOut = count('out');
+  $('view-label').textContent = viewLabel();
+  $('inside').textContent = nIn;
+  $('pending').textContent = count('pending');
+  $('outside').textContent = nOut;
+  $('total').textContent = nIn + nOut;
+
+  // Face Scanner section: today's registrations waiting for the guard
+  const queue = pendingToday();
+  $('pending-count').textContent = queue.length;
+  $('pending-count').hidden = !queue.length;
+  const pl = $('pending-list');
+  pl.replaceChildren();
+  if (!queue.length) {
+    const p = document.createElement('p');
+    p.className = 'help-text';
+    p.textContent = 'No visitors are waiting for check-in.';
+    pl.append(p);
+  } else {
+    for (const v of queue) pl.append(buildCard(v, now));
+  }
+
+  // Visitor Records section
+  const status = $('status').value;
+  const base = scoped.filter((v) => (state(v) === 'cancelled') === (status === 'cancelled')).length;
+  const matches = filtered(scoped);
+  const box = $('records');
+  $('result-count').textContent = `Showing ${matches.length} of ${base} ${status === 'cancelled' ? 'cancelled registrations' : 'records'}`;
+  box.replaceChildren();
+  if (!matches.length) {
+    const p = document.createElement('p');
+    p.className = 'help-text';
+    p.textContent = base
+      ? 'No matching visitor records.'
+      : (customRange() ? 'No visitor records in this date range.' : 'No visitors have registered or checked in today yet.');
+    box.append(p);
+    return;
+  }
+  for (const v of matches) box.append(buildCard(v, now));
 }
+
+// ---------- Guard actions on a visit ----------
+const visitRef = (v) => vistaDb.collection('visits').doc(v.id);
+const serverTime = () => firebase.firestore.FieldValue.serverTimestamp();
+
+/** Pending Check-In -> Checked In. The check-in time is recorded by the server. */
+async function checkInVisit(v) { await visitRef(v).update({ status: 'in', inAt: serverTime() }); }
+
+/** Pending Check-In -> Cancelled (visitor did not arrive, or registered by mistake). */
+async function cancelVisit(v) { await visitRef(v).update({ status: 'cancelled' }); }
+
+/** Checked In -> Checked Out. The check-out time is recorded by the server. */
+async function checkOutVisit(v) { await visitRef(v).update({ status: 'out', outAt: serverTime() }); }
 
 // ---------- Export: date-range sheet ----------
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -199,7 +271,7 @@ function rangeFor(mode) {
 function exportList() {
   const s = $('export-start').value, e = $('export-end').value;
   if (exportMode !== 'all' && s && e && e < s) return null;
-  return visits.filter((v) => {
+  return visits.filter(isVisit).filter((v) => {
     if (exportMode === 'all') return true;
     const d = fmt.dayKey(v.inAt);
     if (!d) return false;
@@ -281,7 +353,7 @@ function reportRows(list, now) {
       outTime: v.outAt ? fmt.time(v.outAt) : '—',
       stay: v.outAt ? fmt.duration(ms) : `${fmt.duration(ms)} (inside)`,
       status: v.outAt ? 'Checked Out' : 'Inside',
-      entry: v.source === 'guard' ? 'Walk-in (guard)' : 'Self check-in',
+      entry: v.source === 'guard' ? 'Walk-in (guard)' : 'Online registration',
     };
   });
 }
@@ -476,6 +548,18 @@ $('carry-toggle').addEventListener('click', () => { showEarlier = !showEarlier; 
 // When the tab wakes up (e.g. next morning), re-check which day it is
 document.addEventListener('visibilitychange', () => { if (authorized && document.visibilityState === 'visible') render(); });
 
+// ---------- Dashboard sections ----------
+function showTab(name) {
+  for (const t of ['records', 'scanner']) {
+    const on = t === name;
+    $(`tab-${t}`).hidden = !on;
+    $(`tab-${t}-btn`).setAttribute('aria-selected', String(on));
+    $(`tab-${t}-btn`).classList.toggle('active', on);
+  }
+}
+$('tab-records-btn').addEventListener('click', () => showTab('records'));
+$('tab-scanner-btn').addEventListener('click', () => showTab('scanner'));
+
 // ---------- Walk-in check-in by guard ----------
 const mPurpose = $('manual-purpose'), mOther = $('manual-other'), mOtherWrap = $('manual-other-wrap'), mName = $('manual-name'), mCar = $('manual-car');
 let manualBusy = false;
@@ -511,8 +595,11 @@ $('manual-form').addEventListener('submit', async (e) => {
     const doc = vistaDb.collection('visits').doc();
     await doc.set({
       ownerUid: user.uid, name, purpose: p, car,
-      inAt: firebase.firestore.FieldValue.serverTimestamp(),
-      outAt: null, source: 'guard'
+      status: 'in',
+      createdAt: serverTime(),
+      inAt: serverTime(),
+      outAt: null, source: 'guard',
+      faceConsent: false
     });
     form.reset();
     mOtherWrap.hidden = true;
@@ -566,6 +653,7 @@ function showDashboard(user) {
     return;
   }
   authorized = true;
+  showTab('records');
   $('signed-in-as').textContent = user.email || 'Operator';
   $('operator-login').hidden = true;
   $('operator-dashboard').hidden = false;
