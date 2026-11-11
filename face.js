@@ -90,7 +90,7 @@ const VistaFace = (() => {
     try {
       s = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { facingMode: { ideal: facing }, width: { ideal: 640 }, height: { ideal: 480 } },
       });
     } catch (err) {
       throw explainCameraError(err);
@@ -191,3 +191,7 @@ const VistaFace = (() => {
 
   return { load, openCamera, stopCamera, capture, explainCameraError, FaceError, CAPTURE, VERSION };
 })();
+
+
+// Start loading the face models in the background as soon as the guard opens the Face Scanner tab
+document.getElementById('tab-scanner-btn')?.addEventListener('click', () => { VistaFace.load().catch(() => {}); });

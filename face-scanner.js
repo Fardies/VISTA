@@ -208,9 +208,13 @@ async function startFaceScan() {
   faceStatus('Starting camera…', 0);
   const video = fEl('face-video');
   try {
-    await VistaFace.load((t) => current() && faceStatus(t, 0));
-    if (!current()) return;
-    await VistaFace.openCamera(video, faceUI.facing, ctrl.signal);
+        // Load the face models and open the camera at the same time (faster than one after the other)
+    const started = await Promise.allSettled([
+      VistaFace.load((t) => current() && faceStatus(t, 0)),
+      VistaFace.openCamera(video, faceUI.facing, ctrl.signal),
+    ]);
+    const failed = started.find((r) => r.status === 'rejected');
+    if (failed) throw failed.reason;
     if (!current()) return;
     const scan = await VistaFace.capture(video, { onStatus: (t, p) => current() && faceStatus(t, p), signal: ctrl.signal });
     if (!current()) return;
