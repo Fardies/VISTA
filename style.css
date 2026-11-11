@@ -144,3 +144,4 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.6}
   .date-pair,.filter-grid{gap:10px}
   input[type=date]{padding-left:10px;padding-right:10px;font-size:15px}
 }
+input[type=date]{outline:4px solid red !important}
