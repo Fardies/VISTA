@@ -1,0 +1,15 @@
+{
+  "name": "vista-face-functions",
+  "private": true,
+  "description": "VISTA face check-in/check-out backend (Cloud Functions for Firebase)",
+  "main": "index.js",
+  "engines": { "node": "22" },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "deploy": "firebase deploy --only functions,firestore:rules"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0",
+    "firebase-functions": "^6.0.0"
+  }
+}

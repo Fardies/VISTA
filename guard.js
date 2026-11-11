@@ -135,6 +135,9 @@ function buildCard(v, now) {
   if (long) tags.append(badge(`Over ${LONG_STAY_HOURS}h`, 'warn'));
   if (v.source === 'guard') tags.append(badge('Walk-in', 'guard'));
   if (st === 'pending') tags.append(badge(v.faceConsent ? 'Face check-in' : 'Manual only', v.faceConsent ? 'guard' : 'out'));
+  const faceIn = String(v.checkInMethod || '').startsWith('face');
+  const faceOut = String(v.checkOutMethod || '').startsWith('face');
+  if (st !== 'pending' && faceIn) tags.append(badge(faceOut ? 'Face in/out' : 'Face check-in', 'guard'));
   head.append(h, tags);
 
   card.append(head, row('Purpose of Visit', v.purpose || '—'), row('Car Plate Number', v.car || '—', 'mono'));
@@ -161,8 +164,16 @@ function buildCard(v, now) {
   }
 
   if (st === 'pending') {
+    if (v.faceConsent) {
+      const scanBtn = document.createElement('button');
+      scanBtn.type = 'button';
+      scanBtn.className = 'btn primary';
+      scanBtn.textContent = 'Scan Face';
+      scanBtn.addEventListener('click', () => window.openFaceCheckIn && window.openFaceCheckIn(v));
+      card.append(scanBtn);
+    }
     card.append(
-      actionButton('Check In', 'primary',
+      actionButton(v.faceConsent ? 'Manual Check In' : 'Check In', v.faceConsent ? 'secondary' : 'primary',
         () => `Check in ${v.name}?\nCheck-in time will be recorded as now (${fmt.time(new Date())}).`,
         () => checkInVisit(v)),
       actionButton('Cancel Registration', 'secondary',
@@ -207,6 +218,8 @@ function render() {
 
   // Face Scanner section: today's registrations waiting for the guard
   const queue = pendingToday();
+  const faceInside = window.faceInsideCount ? window.faceInsideCount() : 0;
+  $('face-inside-count').textContent = faceInside ? `${faceInside} can check out by face` : 'No one to check out by face.';
   $('pending-count').textContent = queue.length;
   $('pending-count').hidden = !queue.length;
   const pl = $('pending-list');
@@ -243,14 +256,22 @@ function render() {
 const visitRef = (v) => vistaDb.collection('visits').doc(v.id);
 const serverTime = () => firebase.firestore.FieldValue.serverTimestamp();
 
-/** Pending Check-In -> Checked In. The check-in time is recorded by the server. */
-async function checkInVisit(v) { await visitRef(v).update({ status: 'in', inAt: serverTime() }); }
+// Face check-in/check-out use Cloud Functions (face-scanner.js); these are the manual paths.
+
+/** Pending Check-In -> Checked In (manual). The check-in time is recorded by the server. */
+async function checkInVisit(v) { await visitRef(v).update({ status: 'in', inAt: serverTime(), checkInMethod: 'manual' }); }
 
 /** Pending Check-In -> Cancelled (visitor did not arrive, or registered by mistake). */
-async function cancelVisit(v) { await visitRef(v).update({ status: 'cancelled' }); }
+async function cancelVisit(v) {
+  await visitRef(v).update({ status: 'cancelled' });
+  if (window.releaseFaceTemplate) window.releaseFaceTemplate(v);
+}
 
-/** Checked In -> Checked Out. The check-out time is recorded by the server. */
-async function checkOutVisit(v) { await visitRef(v).update({ status: 'out', outAt: serverTime() }); }
+/** Checked In -> Checked Out (manual). Also deletes the visitor's face template, if any. */
+async function checkOutVisit(v) {
+  await visitRef(v).update({ status: 'out', outAt: serverTime(), checkOutMethod: 'manual' });
+  if (window.releaseFaceTemplate) window.releaseFaceTemplate(v);
+}
 
 // ---------- Export: date-range sheet ----------
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -353,7 +374,7 @@ function reportRows(list, now) {
       outTime: v.outAt ? fmt.time(v.outAt) : '—',
       stay: v.outAt ? fmt.duration(ms) : `${fmt.duration(ms)} (inside)`,
       status: v.outAt ? 'Checked Out' : 'Inside',
-      entry: v.source === 'guard' ? 'Walk-in (guard)' : 'Online registration',
+      entry: v.source === 'guard' ? 'Walk-in (guard)' : (String(v.checkInMethod || '').startsWith('face') ? 'Online registration · Face' : 'Online registration'),
     };
   });
 }
@@ -599,7 +620,8 @@ $('manual-form').addEventListener('submit', async (e) => {
       createdAt: serverTime(),
       inAt: serverTime(),
       outAt: null, source: 'guard',
-      faceConsent: false
+      faceConsent: false,
+      checkInMethod: 'walk-in'
     });
     form.reset();
     mOtherWrap.hidden = true;

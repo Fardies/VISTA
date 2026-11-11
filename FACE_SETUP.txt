@@ -1,0 +1,143 @@
+VISTA FACE SCANNER — SETUP, SECURITY AND TESTING
+=================================================
+
+Flow (Option A, one visit record from start to end)
+  1. Visitor scans the QR code, fills in name / purpose / car plate, ticks consent.
+     -> visits/{id}  status "pending", no check-in time.
+  2. Guard: Face Scanner tab > picks the visitor > Scan Face > Confirm.
+     -> Cloud Function faceEnrollCheckIn saves the ENCRYPTED face template in
+        faceTemplates/{same id} and sets the SAME visit to status "in" + inAt.
+  3. Guard: Scan Face to Check Out > VISTA shows the matched visitor > Confirm.
+     -> faceMatchCheckOut finds the visitor (server side), faceConfirmCheckOut
+        sets the SAME visit to "out" + outAt and DELETES the template.
+  Manual Check In / Manual Check-Out always remain available.
+
+
+1. BEFORE USING REAL FACES
+--------------------------
+- Face templates are biometric data = SENSITIVE personal data under Malaysia's
+  PDPA (amended 2024; biometric data in force from 1 April 2025).
+- Get written approval from CDC (supervisor / data protection officer) first.
+- Initial testing: only yourself and a coworker who has agreed in writing.
+- Retention used by VISTA: deleted at check-out, or after 24 hours at most
+  (RETENTION_HOURS in functions/index.js). Change only if CDC approves.
+
+
+2. WHAT THE BACKEND NEEDS
+-------------------------
+Cloud Functions for Firebase requires the Blaze (pay-as-you-go) plan.
+Expected VISTA usage stays inside the no-cost quotas:
+  Cloud Functions   2,000,000 calls, 400,000 GB-s, 200,000 CPU-s per month free
+                    (VISTA: about 3 calls per face visit)
+  Secret Manager    6 secret versions, 10,000 access operations per month free
+                    (VISTA: 1 secret)
+  Cloud Scheduler   3 jobs per billing account per month free (VISTA: 1 job)
+  Firestore         same free quota as now (templates are about 6 KB each)
+Blaze has NO hard spending cap. Set a budget alert (step 3.2).
+
+
+3. ONE-TIME SETUP (project owner: Farah, project vista-4292a)
+-------------------------------------------------------------
+3.1 Firebase Console > Upgrade project > Blaze. Link a billing account.
+3.2 Google Cloud Console > Billing > Budgets & alerts > Create budget
+    (for example USD 1/month, alerts at 50%, 90%, 100%).
+3.3 On a laptop (Node.js 22 installed), in the VISTA folder:
+      npm install -g firebase-tools
+      firebase login
+      firebase use vista-4292a
+3.4 Create the encryption key (32 random bytes). Run:
+      node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+    then store it as a secret (paste the value when asked):
+      firebase functions:secrets:set FACE_TEMPLATE_KEY
+    NEVER put this key in GitHub, chat or email. If it is lost, active
+    templates simply stop working (guards use manual check-out).
+3.5 Install and test the backend:
+      cd functions
+      npm install
+      npm test          (all tests must pass)
+      cd ..
+3.6 Deploy the security rules and the functions together:
+      firebase deploy --only firestore:rules,functions
+    Region: asia-southeast1 (Singapore).
+3.7 Front end: the camera only works on https:// (or http://localhost).
+    GitHub Pages is https, so it works. A local IP such as
+    http://192.168.x.x will NOT open the camera on phones.
+
+
+4. TEST PLAN — ANDROID AND IPHONE
+---------------------------------
+Use the GitHub Pages link on both phones. Tick each item.
+Android: Chrome.  iPhone: Safari (iOS 15 or newer).
+
+Setup
+  [ ] First open of Face Scanner downloads about 10 MB (use Wi-Fi). Later opens are fast.
+  [ ] Camera permission prompt appears; after Allow, video shows in the page
+      (iPhone: video must NOT go full screen).
+  [ ] "Switch camera" changes between back and front camera.
+Check-in
+  [ ] Visitor registers on phone A with consent ticked -> appears in Face Scanner tab.
+  [ ] Guard on phone B: Scan Face -> hints change (No face / Move closer /
+      Scanning 1/5 ... 5/5) -> Confirm -> visitor shows "Inside", badge "Face check-in".
+  [ ] Two people in view -> "More than one face", scan does not complete.
+  [ ] Visitor without consent -> only manual Check In button.
+  [ ] Same person tries to register and face-check-in again while still inside -> refused.
+Check-out
+  [ ] Guard on phone C (a different phone from check-in): Scan Face to Check Out ->
+      correct visitor shown -> Confirm -> "Checked Out", badge "Face in/out".
+  [ ] A person who never checked in -> "No confident match", manual route offered.
+  [ ] Not This Person -> nothing changes.
+  [ ] Manual Check-Out of a face visitor -> template deleted (check faceTemplates in
+      Firebase Console is empty for that visit).
+Errors
+  [ ] Block camera permission -> clear instructions shown, manual buttons still work.
+  [ ] Turn off internet during check-out -> clear error, nothing changes.
+  [ ] Photo of the visitor on another phone screen -> may show "Possible photo or
+      screen detected"; record whether it was caught (see 6).
+
+
+5. CALIBRATE THE MATCH THRESHOLD (before any real use)
+------------------------------------------------------
+Start values in functions/lib.js:  MATCH = { threshold: 0.65, margin: 0.08 }
+Every check-out scan writes its scores to the faceEvents collection
+(scores only, no face data): "best" = top score, "second" = runner-up.
+  a) Check in person A and person B by face (both inside at once).
+  b) Do 10 check-out scans of A and 10 of B in different light, angles, with
+     and without glasses. Press "Not This Person" so they stay inside.
+  c) Firebase Console > Firestore > faceEvents: write down "best" for each scan
+     (the genuine score) and "second" (the other person = impostor score).
+  d) The threshold must be ABOVE every impostor score and BELOW most genuine
+     scores. Example: impostors up to 0.41, genuine from 0.70 -> 0.60 is safe.
+  e) Change MATCH in functions/lib.js and run: firebase deploy --only functions
+Two people is a small test. Re-check with more consenting staff before any
+wider use. If genuine and impostor scores overlap, do NOT use face check-out.
+
+
+6. KNOWN LIMITATIONS (say these in the presentation)
+---------------------------------------------------
+- Spoofing: the browser anti-spoof and liveness models are advisory only and can
+  be fooled by a good photo or video. That is why the guard ALWAYS confirms,
+  and a warning forces an extra "checked in person" tick.
+- Accuracy drops with poor light, masks, caps, heavy angles; twins may match.
+  Ambiguous results are never auto-picked.
+- Model bias: Human.js models are not retrained; accuracy can differ between
+  groups of people.
+- Shared operator login: all guards use one account, so the audit log cannot
+  tell guards apart. Recommended next step: one account per guard.
+- Needs internet; no offline face check.
+
+
+7. LICENCES
+-----------
+Human.js 3.3.6 (@vladmandic/human): MIT licence.
+Face description model (FaceRes) is derived from HSE_FaceRec_tf (Apache-2.0).
+Face detection and mesh models come from Google MediaPipe. The anti-spoofing
+model credits a Kaggle source with no clear licence; for anything beyond an
+internship prototype, review it or switch antispoof off in face.js.
+
+
+8. TROUBLESHOOTING
+------------------
+"Face service is not reachable"  -> functions not deployed or wrong region.
+"Permission denied"              -> publish firestore.rules; sign in as operator.
+Camera does not open             -> page must be https://; check browser permission.
+Template left after manual out   -> removed automatically by the hourly clean-up.

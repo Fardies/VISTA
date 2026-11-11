@@ -1,0 +1,102 @@
+VISTA — LOCAL FACE MATCHING (Spark plan, free)
+==============================================
+
+What this is
+  Face check-in/check-out with Human.js that runs on the free Spark plan.
+  - Face templates are saved ONLY in the guard phone's browser (localStorage).
+  - Nothing biometric is uploaded to Firestore. Visits are updated as normal,
+    with checkInMethod / checkOutMethod = "face-local".
+  - Check-in and check-out MUST be on the same phone and the same browser.
+  - Templates are deleted at check-out or after 24 hours.
+  - Test only with yourself and coworkers who agreed. Use test names
+    (e.g. "IZZAH TEST"), not real visitors.
+
+Mode switch (face-scanner.js, top of file)
+  const FACE_MODE = 'local';   // Local face matching on Spark (now)
+  const FACE_MODE = 'cloud';   // Cloud Functions on Blaze (later, see FACE_SETUP.txt)
+  The Cloud Functions code in functions/ is kept unchanged.
+
+
+1. ONE-TIME: PUBLISH THE RULES (Farah, free on Spark)
+-----------------------------------------------------
+Firebase Console > Firestore Database > Rules > paste firestore.rules > Publish.
+Without this, Register Visit or Confirm will show "Permission denied".
+Do NOT upgrade Firebase or deploy functions for this prototype.
+
+
+2. TEST ON THE LAPTOP FIRST (easiest)
+-------------------------------------
+  npx serve -l 5501 --no-clipboard
+  Visitor:  http://localhost:5501
+  Guard:    http://localhost:5501/guard.html
+The laptop webcam works on localhost. Use the front camera ("Flip" button).
+
+
+3. TEST ON YOUR PHONE (needs an https link)
+-------------------------------------------
+Phones only open the camera on https://. A local IP like http://192.168.x.x
+will NOT work. Free option, no account needed (Cloudflare quick tunnel):
+  Terminal 1:  npx serve -l 5501 --no-clipboard
+  Terminal 2:  npx cloudflared tunnel --url http://localhost:5501
+Terminal 2 prints a link like https://something-words.trycloudflare.com.
+Open <that link>/guard.html on the phone. Keep both terminals open.
+(First run downloads the cloudflared program, about 30 MB.)
+Note: the link changes every time; anyone with the link can open the page,
+so close the tunnel (Ctrl+C) when you finish testing.
+
+Android (Chrome)
+  - Tap Allow when asked for the camera.
+  - If blocked: tap the icon left of the address > Permissions > Camera > Allow.
+
+iPhone (Safari)
+  - Use Safari, iOS 15 or newer. Do NOT use Private Browsing: it deletes the
+    saved faces when the tab closes.
+  - Safari may ask for camera permission on every visit. To stop it:
+    Settings > Apps > Safari > Camera > Allow.
+  - Switching to another app stops the camera; just tap Scan Again.
+  - Safari can delete site data if the site is not opened for about 7 days.
+  - Older iPhones scan more slowly; keep the phone steady for 2-3 seconds.
+Both
+  - First open downloads about 10 MB of face models (use Wi-Fi).
+  - Good light on the face; no strong light behind the person.
+
+
+4. FULL WORKFLOW TEST
+---------------------
+  a) Phone or laptop: open the visitor page, Register Visit as "IZZAH TEST",
+     tick "I agree to face recognition", Submit.
+  b) Guard phone: guard.html > sign in > Face Scanner tab.
+  c) Under Waiting for Check-In, press Scan Face on IZZAH TEST > Start Scan.
+     Follow the hints (No face found / Move closer / Scanning 1/5 ... 5/5).
+  d) Check the details match > Confirm Check-In. The record shows Inside.
+  e) Later: Scan Face to Check Out > Start Scan.
+     It should show IZZAH TEST and "Match xx%". Confirm Check-Out.
+  f) Visitor Records: IZZAH TEST shows "Checked Out" and badge "Face in/out".
+
+
+5. ACCURACY TEST (for your report)
+----------------------------------
+  1. Check in two people by face (you + coworker), both stay inside.
+  2. Do about 10 check-out scans of each person: different light, angles,
+     glasses on/off. If VISTA shows the right person, note the score and press
+     Not This Person (so they stay inside). If it shows the wrong person,
+     press Not This Person too.
+  3. Also scan someone who is NOT checked in: it should say "No match found".
+  4. Write down the "Match xx%" for each scan (right person vs wrong person).
+     A good result: right-person scores clearly above wrong-person scores.
+     VISTA suggests a match only at 65% or more AND 8 points above the next
+     person (same rule as the Cloud Functions version).
+     (Scores are also kept on the phone: in the browser console run
+      FaceLocal.logs() to see them.)
+  5. When done, check out the test visitors (this deletes their face data).
+
+
+6. LIMITATIONS (say these in the presentation)
+----------------------------------------------
+  - Same phone and browser only; another guard phone cannot check out.
+  - Anyone with that phone can read the saved templates.
+  - Photo / screen spoofing is not prevented; the guard must always confirm.
+  - Accuracy depends on light, angle, masks, glasses; results with 2 people are
+    an early indication, not proof.
+  - For real use: CDC approval (PDPA, biometric data) + the Cloud Functions
+    version on Blaze.

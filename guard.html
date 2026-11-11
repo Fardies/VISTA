@@ -8,9 +8,13 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js" defer></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js" defer></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-functions-compat.js" defer></script>
   <script src="firebase-config.js" defer></script>
   <script src="common.js" defer></script>
   <script src="guard.js" defer></script>
+  <script src="face.js" defer></script>
+  <script src="face-local.js" defer></script>
+  <script src="face-scanner.js" defer></script>
 </head>
 <body>
 <header class="site-header">
@@ -96,19 +100,20 @@
     </div>
 
     <div id="tab-scanner" role="tabpanel" aria-labelledby="tab-scanner-btn" hidden>
-      <p class="section-label">Waiting for check-in</p>
-      <div class="info-panel">
-        <span aria-hidden="true">◉</span>
+      <div class="face-checkout-card">
         <div>
-          <strong>Face scanning is coming in the next update</strong>
-          <p>For now, press Check In on a visitor when they arrive at the desk. Visitors who did not agree to a face scan are always checked in manually.</p>
+          <strong>Visitor leaving?</strong>
+          <p id="face-inside-count">No one to check out by face.</p>
         </div>
+        <button type="button" class="btn primary" id="scan-checkout">Scan Face to Check Out</button>
       </div>
+
+      <p class="section-label">Waiting for check-in</p>
       <div id="pending-list" class="record-list" aria-live="polite"></div>
     </div>
   </section>
 </main>
-<footer>VISTA · Operator dashboard · Firebase-connected system</footer>
+<footer>&copy; 2026 CDC Technologies Sdn Bhd · VISTA Visitor Information &amp; Smart Tracking Application</footer>
 
 <div class="modal-backdrop" id="export-modal" hidden>
   <div class="modal-sheet" role="dialog" aria-modal="true" aria-labelledby="export-title">
@@ -124,6 +129,25 @@
     </div>
     <div class="date-pair"><div><label for="export-start">Start</label><input id="export-start" type="date"></div><div><label for="export-end">End</label><input id="export-end" type="date"></div></div>
     <p class="export-note" id="export-count" aria-live="polite"></p>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="face-modal" hidden>
+  <div class="modal-sheet face-sheet" role="dialog" aria-modal="true" aria-labelledby="face-title">
+    <div class="modal-bar"><button type="button" class="modal-link cancel" id="face-close">Close</button><span class="face-step" id="face-step"></span></div>
+    <h2 id="face-title">Face Check-In</h2>
+    <div id="face-visitor" hidden></div>
+    <div class="face-camera" id="face-camera" hidden>
+      <video id="face-video" playsinline muted autoplay></video>
+      <div class="face-guide" aria-hidden="true"></div>
+      <button type="button" class="face-flip" id="face-flip" aria-label="Switch between front and back camera">⟲ Flip</button>
+      <div class="face-progress"><span id="face-progress"></span></div>
+      <p class="face-status" id="face-status" role="status" aria-live="polite"></p>
+    </div>
+    <div class="face-result" id="face-result" aria-live="polite" hidden></div>
+    <p class="form-error" id="face-error" role="alert" hidden></p>
+    <div class="face-actions" id="face-actions"></div>
+    <p class="face-note" id="face-note">No photo saved. Face data deleted at check-out.</p>
   </div>
 </div>
 </body>

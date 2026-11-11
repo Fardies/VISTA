@@ -1,9 +1,16 @@
 rules_version = '2';
+// VISTA Firestore security rules (face check-in version).
+// Publish: Firebase Console > Firestore Database > Rules > paste > Publish,
+// or `firebase deploy --only firestore:rules`.
+//
+// Flow (Option A): visitor registers (pending) -> guard checks in (face or manual)
+// -> guard checks out (face or manual). All in the SAME visits/{visitId} record.
+// Face templates are written and read ONLY by Cloud Functions (Admin SDK), which
+// bypass these rules. Browsers can never read or write faceTemplates.
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Operator account already created in Firebase Authentication.
-    // Only this exact signed-in email/password identity has operator access.
-    // If you change operator email, update this value and republish rules.
+    // Operator account in Firebase Authentication. If you change this email,
+    // also change OPERATOR_EMAIL in guard.js and functions/index.js.
     function isOperator() {
       return request.auth != null
         && request.auth.token.email == 'operator@gmail.com'
@@ -13,68 +20,92 @@ service cloud.firestore {
       return request.auth != null
         && request.auth.token.firebase.sign_in_provider == 'anonymous';
     }
+    function validDetails(d) {
+      return d.name is string && d.name.size() > 0 && d.name.size() <= 100
+        && d.purpose is string && d.purpose.size() > 0 && d.purpose.size() <= 120
+        && d.car is string && d.car.size() <= 20;
+    }
+    function changed() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+    // Records made before the pending flow have no status; treat "no check-out" as inside.
+    function isInside() {
+      return resource.data.get('status', null) == 'in'
+        || (resource.data.get('status', null) == null && resource.data.outAt == null);
+    }
+
     match /visits/{visitId} {
-      allow get: if isOperator() ||
-        (isVisitor() && resource.data.ownerUid == request.auth.uid);
+      allow get: if isOperator()
+        || (isVisitor() && resource.data.ownerUid == request.auth.uid);
       allow list: if isOperator();
+
+      // 1. Visitor registration from the QR page: pending, no check-in time yet.
       allow create: if isVisitor()
-        && request.resource.data.keys().hasOnly(['ownerUid','name','purpose','car','inAt','outAt'])
-        && request.resource.data.keys().hasAll(['ownerUid','name','purpose','car','inAt','outAt'])
+        && request.resource.data.keys().hasOnly(['ownerUid','name','purpose','car','status','createdAt','inAt','outAt','faceConsent'])
+        && request.resource.data.keys().hasAll(['ownerUid','name','purpose','car','status','createdAt','inAt','outAt','faceConsent'])
         && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.name is string
-        && request.resource.data.name.size() > 0
-        && request.resource.data.name.size() <= 100
-        && request.resource.data.purpose is string
-        && request.resource.data.purpose.size() > 0
-        && request.resource.data.purpose.size() <= 120
-        && request.resource.data.car is string
-        && request.resource.data.car.size() <= 20
-        && request.resource.data.inAt == request.time
-        && request.resource.data.outAt == null;
-      // NEW: the operator (guard) can create a visit manually for a visitor
-      // who cannot check in themselves (e.g. phone battery is dead).
+        && validDetails(request.resource.data)
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.inAt == null
+        && request.resource.data.outAt == null
+        && request.resource.data.faceConsent is bool;
+
+      // 2. Walk-in visitor registered by the guard: checked in immediately, manual only.
       allow create: if isOperator()
-        && request.resource.data.keys().hasOnly(['ownerUid','name','purpose','car','inAt','outAt','source'])
-        && request.resource.data.keys().hasAll(['ownerUid','name','purpose','car','inAt','outAt','source'])
+        && request.resource.data.keys().hasOnly(['ownerUid','name','purpose','car','status','createdAt','inAt','outAt','source','faceConsent','checkInMethod'])
+        && request.resource.data.keys().hasAll(['ownerUid','name','purpose','car','status','createdAt','inAt','outAt','source','faceConsent'])
         && request.resource.data.ownerUid == request.auth.uid
+        && validDetails(request.resource.data)
         && request.resource.data.source == 'guard'
-        && request.resource.data.name is string
-        && request.resource.data.name.size() > 0
-        && request.resource.data.name.size() <= 100
-        && request.resource.data.purpose is string
-        && request.resource.data.purpose.size() > 0
-        && request.resource.data.purpose.size() <= 120
-        && request.resource.data.car is string
-        && request.resource.data.car.size() <= 20
+        && request.resource.data.status == 'in'
+        && request.resource.data.createdAt == request.time
         && request.resource.data.inAt == request.time
-        && request.resource.data.outAt == null;
-      allow update: if (isOperator() ||
-          (isVisitor() && resource.data.ownerUid == request.auth.uid))
-        && resource.data.outAt == null
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['outAt'])
-        && request.resource.data.outAt == request.time;
+        && request.resource.data.outAt == null
+        && request.resource.data.faceConsent == false
+        && request.resource.data.get('checkInMethod', 'walk-in') == 'walk-in';
+
+      // 3. Guard actions.
+      //    'manual'     = guard pressed Check In / Check-Out.
+      //    'face-local' = PROTOTYPE · Local Face Matching: the face was matched on the
+      //                   guard's phone; no face data is stored in Firestore.
+      //    'face'       = Cloud Functions (Blaze) only; browsers can never set it.
+      allow update: if isOperator() && (
+        // Check-in: pending -> in (face-local only for visitors who consented)
+        (resource.data.get('status', null) == 'pending'
+          && changed().hasOnly(['status','inAt','checkInMethod'])
+          && request.resource.data.status == 'in'
+          && request.resource.data.inAt == request.time
+          && (request.resource.data.checkInMethod == 'manual'
+            || (request.resource.data.checkInMethod == 'face-local' && resource.data.faceConsent == true)))
+        // Cancel a registration that never arrived: pending -> cancelled
+        || (resource.data.get('status', null) == 'pending'
+          && changed().hasOnly(['status'])
+          && request.resource.data.status == 'cancelled')
+        // Check-out: in -> out
+        || (isInside()
+          && changed().hasOnly(['status','outAt','checkOutMethod'])
+          && request.resource.data.status == 'out'
+          && request.resource.data.outAt == request.time
+          && request.resource.data.checkOutMethod in ['manual', 'face-local'])
+      );
+
+      // Visitors cannot change a record after registering. Nobody can delete records.
       allow delete: if false;
     }
-    // One person, one active visit.
-    // A lock document per name (e.g. AHMAD_FAIZAL_BIN_ROSLAN) exists while that person is inside.
-    // Create fails if the lock already exists, so the same name cannot check in twice.
-    match /activeNames/{key} {
-      allow get: if request.auth != null;
-      allow list: if isOperator();
-      allow create: if (isVisitor() || isOperator())
-        && request.resource.data.keys().hasOnly(['visitId','ownerUid','name','since'])
-        && request.resource.data.keys().hasAll(['visitId','ownerUid','name','since'])
-        && request.resource.data.ownerUid == request.auth.uid
-        && request.resource.data.since == request.time
-        && request.resource.data.visitId is string
-        && getAfter(/databases/$(database)/documents/visits/$(request.resource.data.visitId)).data.ownerUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/visits/$(request.resource.data.visitId)).data.name == request.resource.data.name
-        && getAfter(/databases/$(database)/documents/visits/$(request.resource.data.visitId)).data.outAt == null;
-      // Released at check-out by the visitor who owns it, or by the operator
-      allow delete: if isOperator()
-        || (isVisitor() && resource.data.ownerUid == request.auth.uid);
-      allow update: if false;
+
+    // Biometric face templates: Cloud Functions only. No browser access at all.
+    match /faceTemplates/{visitId} {
+      allow read, write: if false;
     }
+
+    // Face audit log (scores and outcomes, no biometric data). Read-only for the
+    // operator, used to calibrate the match threshold.
+    match /faceEvents/{eventId} {
+      allow read: if isOperator();
+      allow write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
