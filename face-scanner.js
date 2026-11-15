@@ -140,7 +140,7 @@ function faceActions(...buttons) { fEl('face-actions').replaceChildren(...button
 function detailsList(v, extra = []) {
   const box = document.createElement('div');
   box.className = 'details-card face-details';
-  const rows = [['Name', v.name], ['Purpose', v.purpose || '—'], ['Car Plate', v.car || '—'], ...extra];
+  const rows = [['Name', v.name], ['Purpose', v.purpose || '-'], ['Car Plate', v.car || '-'], ...extra];
   for (const [k, val] of rows) {
     const d = document.createElement('div');
     const s = document.createElement('span'); s.textContent = k;
@@ -315,18 +315,18 @@ function showSimilarFace(other) {
   warn.textContent = 'This face looks like someone inside.';
   const tip = document.createElement('p');
   tip.className = 'face-lead face-center';
-  tip.textContent = 'Check their IC. Is this the same person?';
+  tip.textContent = 'Check their IC. Same person or a different person?';
   const choices = document.createElement('div');
   choices.className = 'face-choices';
   choices.append(choiceCard(other, 'Inside now', true));
   box.append(warn, tip, choices);
   box.hidden = false;
   faceActions(
-    faceButton('Same Person — Cancel', 'primary', () => {
+    faceButton('Same Person', 'primary', () => {
       FaceLocal.log({ event: 'similar face: same person', visitor: v.name, result: other.name });
       faceDone(`${v.name} was not checked in (already inside as ${other.name}).`);
     }),
-    faceButton('Different Person — Manual Check-In', 'secondary', async () => {
+    faceButton('Different Person', 'secondary', async () => {
       try {
         await checkInVisit(v); // manual: no face saved for this visitor
         FaceLocal.log({ event: 'similar face: different person', visitor: v.name, result: other.name });
@@ -415,8 +415,8 @@ async function findCheckOutMatch() {
   lead.textContent = 'Is this the person?';
   const inAt = v.inAt ? new Date(v.inAt) : null;
   box.append(lead, detailsList(v, [
-    ['Checked In', inAt ? fmt.time(inAt) : '—'],
-    ['Inside For', inAt ? fmt.duration(Date.now() - inAt.getTime()) : '—'],
+    ['Checked In', inAt ? fmt.time(inAt) : '-'],
+    ['Inside For', inAt ? fmt.duration(Date.now() - inAt.getTime()) : '-'],
   ]));
   // Match and possible match look the same to the guard: just the visitor details.
   // (Scores stay in the on-phone log for accuracy checks.)
