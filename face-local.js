@@ -10,7 +10,10 @@ const FaceLocal = (() => {
   const STORE_KEY = 'vista_face_local_v1';
   const LOG_KEY = 'vista_face_testlog_v1';
   const RETENTION_MS = 24 * 3600e3;
-  const MATCH = { threshold: 0.78, margin: 0.08 }; // keep in step with functions/lib.js
+  const MATCH = { threshold: 0.78, margin: 0.08 }; // strong match (keep in step with functions/lib.js)
+  /** "Possible match": a lower score is accepted only when this person is clearly ahead of
+   *  everyone else (e.g. glasses on/off, different lighting). The guard must check carefully. */
+  const POSSIBLE = { threshold: 0.65, margin: 0.12 };
 
   // ---------- Storage (fails safely if the browser blocks storage) ----------
   function read(key, fallback) {
@@ -34,7 +37,7 @@ const FaceLocal = (() => {
     return Array.from(new Float32Array(bytes.buffer));
   }
 
-  /** All saved templates, with expired ones removed. { visitId: { e, name, at } } */
+  /** All saved templates, with expired ones removed. { visitId: { e: average, s: [each frame], name, at } } */
   function all() {
     const db = read(STORE_KEY, {});
     const now = Date.now();
@@ -46,9 +49,9 @@ const FaceLocal = (() => {
     return db;
   }
 
-  function save(visitId, name, embedding) {
+  function save(visitId, name, embedding, samples = []) {
     const db = all();
-    db[visitId] = { e: pack(embedding), name, at: Date.now() };
+    db[visitId] = { e: pack(embedding), s: samples.slice(0, 5).map(pack), name, at: Date.now() };
     if (!write(STORE_KEY, db)) throw new Error('This browser could not save face data (storage blocked or full). Use manual instead.');
   }
   function remove(visitId) { const db = all(); if (db[visitId]) { delete db[visitId]; write(STORE_KEY, db); } }
@@ -68,19 +71,41 @@ const FaceLocal = (() => {
   }
 
   /**
-   * Compares a scan with saved templates. onlyIds: limit to these visits (e.g. visitors inside).
-   * Returns { status: 'match'|'unknown'|'ambiguous'|'none', visitId?, best, second }.
+   * Robust score between a new scan and one saved person.
+   * Every new frame is compared with every saved frame; each new frame keeps its best
+   * score and the middle value (median) is used, so one blurry frame, glasses glare or a
+   * shadow does not decide the result. The average-vs-average score is a second opinion.
+   */
+  function personScore(probe, saved) {
+    const savedFrames = [saved.e, ...(saved.s || [])].map(unpack);
+    const probeFrames = probe.samples && probe.samples.length ? probe.samples : [probe.embedding];
+    const bestPerFrame = probeFrames
+      .map((p) => Math.max(...savedFrames.map((t) => similarity(p, t))))
+      .sort((a, b) => a - b);
+    const median = bestPerFrame[Math.floor(bestPerFrame.length / 2)];
+    const avg = similarity(probe.embedding, savedFrames[0]);
+    return Math.max(median, avg);
+  }
+
+  /**
+   * Compares a scan { embedding, samples } with saved people. onlyIds: limit to these visits.
+   * Returns { status: 'match'|'possible'|'unknown'|'ambiguous'|'none', visitId?, best, second }.
+   *  match    = strong (>= 78% and 8 points ahead of the next person)
+   *  possible = 65-78% but 12 points ahead of everyone else (guard checks carefully)
    */
   function match(probe, onlyIds = null) {
+    if (Array.isArray(probe)) probe = { embedding: probe, samples: [probe] };
     const db = all();
     const ids = Object.keys(db).filter((id) => !onlyIds || onlyIds.has(id));
     if (!ids.length) return { status: 'none', best: null, second: null };
-    const scored = ids.map((id) => ({ id, score: similarity(probe, unpack(db[id].e)) })).sort((a, b) => b.score - a.score);
+    const scored = ids.map((id) => ({ id, score: Math.round(100 * personScore(probe, db[id])) / 100 })).sort((a, b) => b.score - a.score);
     const best = scored[0].score;
     const second = scored[1] ? scored[1].score : 0;
-    if (best < MATCH.threshold) return { status: 'unknown', best, second };
-    if (best - second < MATCH.margin) return { status: 'ambiguous', best, second };
-    return { status: 'match', visitId: scored[0].id, best, second };
+    const gap = best - second;
+    if (best >= MATCH.threshold && gap >= MATCH.margin) return { status: 'match', visitId: scored[0].id, best, second };
+    if (best >= POSSIBLE.threshold && gap >= POSSIBLE.margin) return { status: 'possible', visitId: scored[0].id, best, second };
+    if (best >= POSSIBLE.threshold) return { status: 'ambiguous', best, second };
+    return { status: 'unknown', best, second };
   }
 
   // ---------- Test log (for accuracy testing; no face data) ----------
@@ -99,5 +124,5 @@ const FaceLocal = (() => {
     return `﻿${cols.join(',')}\r\n${rows.join('\r\n')}`;
   }
 
-  return { MATCH, save, remove, has, count, clear, all, match, similarity, log, logs, clearLog, logCsv };
+  return { MATCH, POSSIBLE, save, remove, has, count, clear, all, match, similarity, log, logs, clearLog, logCsv };
 })();

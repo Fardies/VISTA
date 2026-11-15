@@ -26,8 +26,9 @@ const isLocalMode = FACE_MODE === 'local';
 const faceBackend = isLocalMode ? {
   async enroll(v, scan) {
     const inside = new Set(visits.filter((x) => state(x) === 'in').map((x) => x.id));
-    const dup = FaceLocal.match(scan.embedding, inside);
-    if (dup.status === 'match' || dup.status === 'ambiguous') {
+    const dup = FaceLocal.match(scan, inside);
+    // Block only clear look-alikes of someone still inside (strong scores)
+    if (dup.status === 'match' || (dup.status === 'ambiguous' && dup.best >= FaceLocal.MATCH.threshold)) {
       const other = visits.find((x) => x.id === dup.visitId);
       FaceLocal.log({ event: 'check-in blocked', visitor: v.name, result: dup.status, best: dup.best, second: dup.second, ...scan.quality });
       const e = new Error(other ? `This face matches ${other.name}, who is still inside. Check them out first.` : 'This face looks like someone still inside. Use manual.');
@@ -36,17 +37,18 @@ const faceBackend = isLocalMode ? {
     }
     // Same visit record: pending -> in. Only normal visit fields go to Firestore.
     await visitRef(v).update({ status: 'in', inAt: serverTime(), checkInMethod: 'face-local' });
-    FaceLocal.save(v.id, v.name, scan.embedding);
+    FaceLocal.save(v.id, v.name, scan.embedding, scan.samples);
     FaceLocal.log({ event: 'check-in', visitor: v.name, result: 'saved', ...scan.quality });
   },
   async match(scan) {
     const inside = visits.filter((x) => state(x) === 'in');
-    const r = FaceLocal.match(scan.embedding, new Set(inside.map((x) => x.id)));
+    const r = FaceLocal.match(scan, new Set(inside.map((x) => x.id)));
     const v = r.visitId ? inside.find((x) => x.id === r.visitId) : null;
     FaceLocal.log({ event: 'check-out scan', visitor: v ? v.name : '', result: r.status, best: r.best, second: r.second, ...scan.quality });
-    if (r.status !== 'match' || !v) return { status: r.status === 'match' ? 'unknown' : r.status, best: r.best };
+    const found = r.status === 'match' || r.status === 'possible';
+    if (!found || !v) return { status: found ? 'unknown' : r.status, best: r.best };
     const inAt = toDate(v.inAt);
-    return { status: 'match', score: r.best, second: r.second, visit: { id: v.id, name: v.name, purpose: v.purpose, car: v.car, inAt: inAt ? inAt.toISOString() : null } };
+    return { status: r.status, score: r.best, second: r.second, visit: { id: v.id, name: v.name, purpose: v.purpose, car: v.car, inAt: inAt ? inAt.toISOString() : null } };
   },
   async confirmOut(m) {
     await visitRef({ id: m.visit.id }).update({ status: 'out', outAt: serverTime(), checkOutMethod: 'face-local' });
@@ -75,7 +77,7 @@ function faceInsideCount() {
 const faceUI = {
   mode: null,        // 'checkin' | 'checkout'
   visit: null,       // check-in target, or matched visitor at check-out
-  scan: null,        // { embedding, quality, spoofWarning } — kept only until confirm/close
+  scan: null,        // { embedding, samples, quality } — kept only until confirm/close
   match: null,       // { visit, score, token }
   abort: null,       // AbortController of the running scan
   scanId: 0,         // increases on every start/stop, so late results of an old scan are ignored
@@ -235,12 +237,10 @@ async function startFaceScan() {
   }
 }
 
-function qualityLine(q, score, second) {
+function qualityLine(q) {
   const p = document.createElement('p');
   p.className = 'face-quality';
-  const scan = q.consistency >= 0.8 ? 'Good' : 'OK';
-  let text = score != null ? `Match ${Math.round(score * 100)}% · Scan ${scan}` : `Scan quality: ${scan}`;
-  p.textContent = text;
+  p.textContent = `Scan quality: ${q.consistency >= 0.8 ? 'Good' : 'OK'}`;
   return p;
 }
 
@@ -315,9 +315,10 @@ async function findCheckOutMatch() {
     return;
   }
   faceUI.scan.embedding = null; // no longer needed in the browser
+  faceUI.scan.samples = null;
   box.replaceChildren();
 
-  if (res.status !== 'match') {
+  if (res.status !== 'match' && res.status !== 'possible') {
     const p = document.createElement('p');
     p.className = 'face-miss';
     p.textContent = {
@@ -342,7 +343,9 @@ async function findCheckOutMatch() {
   box.append(lead, detailsList(v, [
     ['Checked In', inAt ? fmt.time(inAt) : '—'],
     ['Inside For', inAt ? fmt.duration(Date.now() - inAt.getTime()) : '—'],
-  ]), qualityLine(faceUI.scan.quality, res.score, res.second));
+  ]));
+  // Match and possible match look the same to the guard: just the visitor details.
+  // (Scores stay in the on-phone log for accuracy checks.)
   const confirmBtn = faceButton('Confirm Check-Out', 'primary', confirmFaceCheckOut);
   faceActions(confirmBtn, faceButton('Not This Person', 'secondary', notThisPerson));
 }
