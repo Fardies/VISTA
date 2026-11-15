@@ -137,7 +137,8 @@ function buildCard(v, now) {
   if (st === 'pending') tags.append(badge(v.faceConsent ? 'Face check-in' : 'Manual only', v.faceConsent ? 'guard' : 'out'));
   const faceIn = String(v.checkInMethod || '').startsWith('face');
   const faceOut = String(v.checkOutMethod || '').startsWith('face');
-  if (st !== 'pending' && faceIn) tags.append(badge(faceOut ? 'Face in/out' : 'Face check-in', 'guard'));
+  // One label for any visit that used the face scan (check-in, check-out or both)
+  if (st !== 'pending' && (faceIn || faceOut)) tags.append(badge('Face check-in', 'guard'));
   head.append(h, tags);
 
   card.append(head, row('Purpose of Visit', v.purpose || '—'), row('Car Plate Number', v.car || '—', 'mono'));

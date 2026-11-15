@@ -313,20 +313,14 @@ function showSimilarFace(other) {
   const warn = document.createElement('p');
   warn.className = 'face-miss face-center';
   warn.textContent = 'This face looks like someone inside.';
-  const tip = document.createElement('p');
-  tip.className = 'face-lead face-center';
-  tip.textContent = 'Check their IC. Same person or a different person?';
   const choices = document.createElement('div');
   choices.className = 'face-choices';
   choices.append(choiceCard(other, 'Inside now', true));
-  box.append(warn, tip, choices);
+  box.append(warn, choices);
   box.hidden = false;
+  // Same person: the guard simply closes this window (registration stays pending).
   faceActions(
-    faceButton('Same Person', 'primary', () => {
-      FaceLocal.log({ event: 'similar face: same person', visitor: v.name, result: other.name });
-      faceDone(`${v.name} was not checked in (already inside as ${other.name}).`);
-    }),
-    faceButton('Different Person', 'secondary', async () => {
+    faceButton('Different Person', 'primary', async () => {
       try {
         await checkInVisit(v); // manual: no face saved for this visitor
         FaceLocal.log({ event: 'similar face: different person', visitor: v.name, result: other.name });
