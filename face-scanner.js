@@ -22,17 +22,24 @@ function callFace(name, data) {
 }
 const isLocalMode = FACE_MODE === 'local';
 
+/** Visitor fields shown on the check-out screen. */
+function publicVisit(v) {
+  const inAt = toDate(v.inAt);
+  return { id: v.id, name: v.name, purpose: v.purpose, car: v.car, inAt: inAt ? inAt.toISOString() : null };
+}
+
 /** The two backends do the same 4 jobs; the screens below do not care which one runs. */
 const faceBackend = isLocalMode ? {
   async enroll(v, scan) {
     const inside = new Set(visits.filter((x) => state(x) === 'in').map((x) => x.id));
-    const dup = FaceLocal.match(scan, inside);
-    // Block only clear look-alikes of someone still inside (strong scores)
-    if (dup.status === 'match' || (dup.status === 'ambiguous' && dup.best >= FaceLocal.MATCH.threshold)) {
-      const other = visits.find((x) => x.id === dup.visitId);
-      FaceLocal.log({ event: 'check-in blocked', visitor: v.name, result: dup.status, best: dup.best, second: dup.second, ...scan.quality });
-      const e = new Error(other ? `This face matches ${other.name}, who is still inside. Check them out first.` : 'This face looks like someone still inside. Use manual.');
-      e.code = 'already-exists';
+    // A face that looks like someone still inside: the guard decides (same person or e.g. a twin)
+    const near = FaceLocal.similar(scan, inside);
+    const other = near && visits.find((x) => x.id === near.id);
+    if (other) {
+      FaceLocal.log({ event: 'check-in similar face', visitor: v.name, result: other.name, best: near.score, ...scan.quality });
+      const e = new Error(`This face looks like ${other.name}, who is inside.`);
+      e.code = 'similar-face';
+      e.other = other;
       throw e;
     }
     // Save locally first; do not mark a visitor inside if face storage fails.
@@ -51,10 +58,13 @@ const faceBackend = isLocalMode ? {
     const r = FaceLocal.match(scan, new Set(inside.map((x) => x.id)));
     const v = r.visitId ? inside.find((x) => x.id === r.visitId) : null;
     FaceLocal.log({ event: 'check-out scan', visitor: v ? v.name : '', result: r.status, best: r.best, second: r.second, ...scan.quality });
+    if (r.status === 'ambiguous') {
+      const candidates = (r.candidates || []).map((id) => inside.find((x) => x.id === id)).filter(Boolean).map(publicVisit);
+      return candidates.length ? { status: 'ambiguous', best: r.best, second: r.second, candidates } : { status: 'unknown', best: r.best };
+    }
     const found = r.status === 'match' || r.status === 'possible';
     if (!found || !v) return { status: found ? 'unknown' : r.status, best: r.best };
-    const inAt = toDate(v.inAt);
-    return { status: r.status, score: r.best, second: r.second, visit: { id: v.id, name: v.name, purpose: v.purpose, car: v.car, inAt: inAt ? inAt.toISOString() : null } };
+    return { status: r.status, score: r.best, second: r.second, visit: publicVisit(v) };
   },
   async confirmOut(m) {
     await visitRef({ id: m.visit.id }).update({ status: 'out', outAt: serverTime(), checkOutMethod: 'face-local' });
@@ -276,6 +286,7 @@ async function confirmFaceCheckIn(e) {
     faceUI.scan = null;
     faceDone(`✓ ${faceUI.visit.name} checked in`);
   } catch (err) {
+    if (err.code === 'similar-face') { showSimilarFace(err.other); return; }
     faceSetError(faceErrorText(err));
     if (faceOffline(err)) {
       // Backend not available: make manual check-in the obvious next step
@@ -285,6 +296,58 @@ async function confirmFaceCheckIn(e) {
     btn.disabled = false;
     btn.textContent = 'Confirm Check-In';
   }
+}
+
+/**
+ * The new face looks like someone already inside. The guard checks IC and chooses:
+ *  - Same person: do not check in again (registration stays pending).
+ *  - Different person (e.g. a twin): manual check-in, and NO face is saved, so the
+ *    two visitors can never be mixed up at check-out.
+ */
+function showSimilarFace(other) {
+  const v = faceUI.visit;
+  faceUI.scan = null;
+  fEl('face-step').textContent = 'Check';
+  const box = fEl('face-result');
+  box.replaceChildren();
+  const warn = document.createElement('p');
+  warn.className = 'face-miss face-center';
+  warn.textContent = 'This face looks like someone inside.';
+  const tip = document.createElement('p');
+  tip.className = 'face-lead face-center';
+  tip.textContent = 'Check their IC. Is this the same person?';
+  const choices = document.createElement('div');
+  choices.className = 'face-choices';
+  choices.append(choiceCard(other, 'Inside now', true));
+  box.append(warn, tip, choices);
+  box.hidden = false;
+  faceActions(
+    faceButton('Same Person — Cancel', 'primary', () => {
+      FaceLocal.log({ event: 'similar face: same person', visitor: v.name, result: other.name });
+      faceDone(`${v.name} was not checked in (already inside as ${other.name}).`);
+    }),
+    faceButton('Different Person — Manual Check-In', 'secondary', async () => {
+      try {
+        await checkInVisit(v); // manual: no face saved for this visitor
+        FaceLocal.log({ event: 'similar face: different person', visitor: v.name, result: other.name });
+        faceDone(`✓ ${v.name} checked in (manual)`);
+      } catch (err) { faceSetError(`Could not check in: ${err.message}`); }
+    }),
+  );
+}
+
+/** One visitor shown as a centred card. selectable=false for a plain display card. */
+function choiceCard(v, note = '', display = false) {
+  const card = document.createElement(display ? 'div' : 'button');
+  if (!display) { card.type = 'button'; card.setAttribute('aria-pressed', 'false'); }
+  card.className = display ? 'face-choice face-choice-static' : 'face-choice';
+  const name = document.createElement('strong');
+  name.textContent = v.name;
+  const inAt = v.inAt ? (v.inAt instanceof Date ? v.inAt : toDate(v.inAt) || new Date(v.inAt)) : null;
+  const meta = document.createElement('span');
+  meta.textContent = [v.purpose, inAt ? `In ${fmt.time(inAt)}` : '', note].filter(Boolean).join(' · ');
+  card.append(name, meta);
+  return card;
 }
 
 async function manualFromModal() {
@@ -324,6 +387,11 @@ async function findCheckOutMatch() {
   faceUI.scan.samples = null;
   box.replaceChildren();
 
+  if (res.status === 'ambiguous' && res.candidates && res.candidates.length) {
+    showCandidates(res);
+    return;
+  }
+
   if (res.status !== 'match' && res.status !== 'possible') {
     const p = document.createElement('p');
     p.className = 'face-miss';
@@ -354,6 +422,35 @@ async function findCheckOutMatch() {
   // (Scores stay in the on-phone log for accuracy checks.)
   const confirmBtn = faceButton('Confirm Check-Out', 'primary', confirmFaceCheckOut);
   faceActions(confirmBtn, faceButton('Not This Person', 'secondary', notThisPerson));
+}
+
+/** Several visitors inside look alike: list them (most similar first); the guard picks one. */
+function showCandidates(res) {
+  const box = fEl('face-result');
+  box.replaceChildren();
+  const warn = document.createElement('p');
+  warn.className = 'face-miss face-center';
+  warn.textContent = 'Looks like more than one visitor.';
+  const tip = document.createElement('p');
+  tip.className = 'face-lead face-center';
+  tip.textContent = 'Check their IC and choose the right person:';
+  const list = document.createElement('div');
+  list.className = 'face-choices';
+  list.setAttribute('role', 'group');
+  list.setAttribute('aria-label', 'Possible visitors');
+  const confirmBtn = faceButton('Confirm Check-Out', 'primary', confirmFaceCheckOut, true);
+  for (const v of res.candidates) {
+    const card = choiceCard(v);
+    card.addEventListener('click', () => {
+      list.querySelectorAll('.face-choice').forEach((c) => c.setAttribute('aria-pressed', 'false'));
+      card.setAttribute('aria-pressed', 'true');
+      faceUI.match = { status: 'chosen', visit: v, score: res.best, second: res.second };
+      confirmBtn.disabled = false;
+    });
+    list.append(card);
+  }
+  box.append(warn, tip, list);
+  faceActions(confirmBtn, faceButton('None of These', 'secondary', goManualCheckOut));
 }
 
 async function confirmFaceCheckOut(e) {

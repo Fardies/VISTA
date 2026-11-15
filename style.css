@@ -144,3 +144,12 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.6}
   .date-pair,.filter-grid{gap:10px}
   input[type=date]{padding-left:10px;padding-right:10px;font-size:15px}
 }
+/* ---- Face scanner: centred choice list (similar faces) ---- */
+.face-center{text-align:center}
+.face-choices{display:grid;gap:10px;width:100%;max-width:420px;margin:4px auto 16px}
+.face-choice{display:flex;flex-direction:column;align-items:center;gap:3px;width:100%;padding:14px 16px;border:1.5px solid #d9e3dc;border-radius:12px;background:#fff;font:inherit;color:#173c32;text-align:center;cursor:pointer;transition:border-color .15s,background .15s}
+.face-choice strong{font-size:15.5px;letter-spacing:.2px}
+.face-choice span{font-size:12.5px;color:#6a7d72}
+.face-choice:hover{border-color:#9fbfae}
+.face-choice[aria-pressed="true"]{border-color:#215d47;background:#eef6f1;box-shadow:0 0 0 3px rgba(33,93,71,.14)}
+.face-choice-static{cursor:default;background:#f7faf8}

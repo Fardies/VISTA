@@ -103,24 +103,41 @@ const FaceLocal = (() => {
     return Math.max(median, top2(probe.embedding, savedFrames));
   }
 
-  /**
-   * Compares a scan { embedding, samples } with saved people. onlyIds: limit to these visits.
-   * Returns { status: 'match'|'possible'|'unknown'|'ambiguous'|'none', visitId?, best, second }.
-   *  match    = strong (>= 78% and 8 points ahead of the next person)
-   *  possible = 65-78% but 12 points ahead of everyone else (guard checks carefully)
-   */
-  function match(probe, onlyIds = null) {
+  /** Every saved person (optionally only onlyIds), most similar first: [{ id, score }]. */
+  function rank(probe, onlyIds = null) {
     if (Array.isArray(probe)) probe = { embedding: probe, samples: [probe] };
     const db = all();
-    const ids = Object.keys(db).filter((id) => !onlyIds || onlyIds.has(id));
-    if (!ids.length) return { status: 'none', best: null, second: null };
-    const scored = ids.map((id) => ({ id, score: Math.round(100 * personScore(probe, db[id])) / 100 })).sort((a, b) => b.score - a.score);
+    return Object.keys(db)
+      .filter((id) => !onlyIds || onlyIds.has(id))
+      .map((id) => ({ id, score: Math.round(100 * personScore(probe, db[id])) / 100 }))
+      .sort((a, b) => b.score - a.score);
+  }
+
+  /** The most similar saved person if the face looks alike (>= possible level), else null. */
+  function similar(probe, onlyIds = null) {
+    const top = rank(probe, onlyIds)[0];
+    return top && top.score >= POSSIBLE.threshold ? top : null;
+  }
+
+  /**
+   * Compares a scan { embedding, samples } with saved people. onlyIds: limit to these visits.
+   * Returns { status: 'match'|'possible'|'unknown'|'ambiguous'|'none', visitId?, best, second, candidates? }.
+   *  match     = strong (>= threshold and clearly ahead of the next person)
+   *  possible  = 65%+ and well ahead of everyone else
+   *  ambiguous = several people look alike; candidates = up to 3 of them, most similar first
+   */
+  function match(probe, onlyIds = null) {
+    const scored = rank(probe, onlyIds);
+    if (!scored.length) return { status: 'none', best: null, second: null };
     const best = scored[0].score;
     const second = scored[1] ? scored[1].score : 0;
     const gap = best - second;
     if (best >= MATCH.threshold && gap >= MATCH.margin) return { status: 'match', visitId: scored[0].id, best, second };
     if (best >= POSSIBLE.threshold && gap >= POSSIBLE.margin) return { status: 'possible', visitId: scored[0].id, best, second };
-    if (best >= POSSIBLE.threshold) return { status: 'ambiguous', best, second };
+    if (best >= POSSIBLE.threshold) {
+      const candidates = scored.filter((x) => best - x.score < POSSIBLE.margin).slice(0, 3).map((x) => x.id);
+      return { status: 'ambiguous', best, second, candidates };
+    }
     return { status: 'unknown', best, second };
   }
 
@@ -140,5 +157,5 @@ const FaceLocal = (() => {
     return `﻿${cols.join(',')}\r\n${rows.join('\r\n')}`;
   }
 
-  return { MATCH, POSSIBLE, save, remove, has, count, clear, all, match, similarity, log, logs, clearLog, logCsv };
+  return { MATCH, POSSIBLE, rank, similar, save, remove, has, count, clear, all, match, similarity, log, logs, clearLog, logCsv };
 })();
