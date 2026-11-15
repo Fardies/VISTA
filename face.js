@@ -21,15 +21,15 @@ const VistaFace = (() => {
     timeoutMs: 30000,
     frameGapMs: 150,
   };
-  /** Below these, VISTA warns that the face may be a photo or a screen. Advisory only. */
-  const SPOOF_WARN = { real: 0.5, live: 0.5 };
+  /** Light on the face (0 = black, 255 = white). Outside this range the scan waits and shows a hint. */
+  const LIGHT = { minFace: 45, maxFace: 235, maxBacklight: 70 };
 
   const CONFIG = {
     modelBasePath: MODELS_URL,
     debug: false,
     warmup: 'none',
     cacheSensitivity: 0, // analyse every frame fully
-    filter: { enabled: true, equalization: false, flip: false },
+    filter: { enabled: true, equalization: true, flip: false }, // balances dark/bright light before reading the face
     face: {
       enabled: true,
       detector: { rotation: true, maxDetected: 3, minConfidence: 0.5, return: false },
@@ -38,8 +38,8 @@ const VistaFace = (() => {
       iris: { enabled: false },
       emotion: { enabled: false },
       description: { enabled: true },
-      antispoof: { enabled: true },
-      liveness: { enabled: true },
+      antispoof: { enabled: false }, // off: faster scan (the guard confirms in person)
+      liveness: { enabled: false },
       gear: { enabled: false },
     },
     body: { enabled: false },
@@ -122,6 +122,33 @@ const VistaFace = (() => {
     return new FaceError('camera', `Camera could not open (${name || 'error'}).`);
   }
 
+  // Small canvas to measure light on the face (reused every frame)
+  const lightCanvas = document.createElement('canvas');
+  lightCanvas.width = 48; lightCanvas.height = 48;
+  const lightCtx = lightCanvas.getContext('2d', { willReadFrequently: true });
+  function brightness(video, box) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return null;
+    const [x, y, w, h] = box ? [box[0] * vw, box[1] * vh, box[2] * vw, box[3] * vh] : [0, 0, vw, vh];
+    try {
+      lightCtx.drawImage(video, x, y, Math.max(1, w), Math.max(1, h), 0, 0, 48, 48);
+      const d = lightCtx.getImageData(0, 0, 48, 48).data;
+      let sum = 0;
+      for (let i = 0; i < d.length; i += 4) sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+      return sum / (d.length / 4);
+    } catch { return null; }
+  }
+  /** Returns a short hint if the light is bad, otherwise ''. */
+  function lightHint(video, boxRaw) {
+    const face = brightness(video, boxRaw);
+    if (face == null) return '';
+    if (face < LIGHT.minFace) return 'Too dark';
+    if (face > LIGHT.maxFace) return 'Too bright';
+    const all = brightness(video, null);
+    if (all != null && all - face > LIGHT.maxBacklight) return 'Light behind face';
+    return '';
+  }
+
   const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
   const round2 = (x) => (x == null ? null : Math.round(x * 100) / 100);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -129,12 +156,12 @@ const VistaFace = (() => {
   /**
    * Scans the face in front of the camera.
    * onStatus(text, progress 0..1) gives live guidance; signal (AbortSignal) cancels.
-   * Resolves { embedding, quality, spoofWarning }.
+   * Resolves { embedding (average), samples (each frame), quality }.
    */
   async function capture(video, { onStatus = () => {}, signal } = {}) {
     const h = await load(onStatus);
     const started = Date.now();
-    const samples = [], real = [], live = [], scores = [];
+    const samples = [], scores = [];
     onStatus('Point at the visitor\'s face', 0);
 
     while (samples.length < CAPTURE.samples) {
@@ -147,20 +174,20 @@ const VistaFace = (() => {
       const faces = (res.face || []).filter((f) => f.score >= 0.5);
       let hint = '';
       if (!faces.length) hint = 'No face found';
-      else if (faces.length > 1) { hint = 'One person only'; samples.length = 0; real.length = 0; live.length = 0; scores.length = 0; }
+      else if (faces.length > 1) { hint = 'One person only'; samples.length = 0; scores.length = 0; }
       else {
         const f = faces[0];
         const angle = f.rotation?.angle || {};
         const turned = Math.max(Math.abs(angle.yaw || 0), Math.abs(angle.pitch || 0), Math.abs(angle.roll || 0));
+        const light = lightHint(video, f.boxRaw);
         if ((f.boxRaw?.[2] || 0) < CAPTURE.minFaceWidth) hint = 'Move closer';
+        else if (light) hint = light;
         else if (f.score < CAPTURE.minFaceScore) hint = 'Need more light';
         else if (turned > CAPTURE.maxAngle) hint = 'Look straight';
         else if (!Array.isArray(f.embedding) || f.embedding.length !== 1024) hint = 'Hold still…';
         else {
           samples.push(Array.from(f.embedding));
           scores.push(f.score);
-          if (typeof f.real === 'number') real.push(f.real);
-          if (typeof f.live === 'number') live.push(f.live);
           hint = `Scanning ${samples.length}/${CAPTURE.samples}`;
         }
       }
@@ -181,14 +208,10 @@ const VistaFace = (() => {
       samples: samples.length,
       consistency: round2(consistency),
       faceScore: round2(mean(scores)),
-      real: round2(mean(real)),
-      live: round2(mean(live)),
     };
-    const spoofWarning = (quality.real != null && quality.real < SPOOF_WARN.real) || (quality.live != null && quality.live < SPOOF_WARN.live);
     onStatus('Face captured', 1);
-    // Keep the original averaged embedding for the cloud backend and old callers.
-    // Local matching can additionally use the five verified individual samples.
-    return { embedding, embeddings: samples, quality, spoofWarning };
+    // embedding = average (cloud backend and old callers); samples/embeddings = the 5 verified frames
+    return { embedding, samples, embeddings: samples, quality };
   }
 
   return { load, openCamera, stopCamera, capture, explainCameraError, FaceError, CAPTURE, VERSION };

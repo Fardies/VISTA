@@ -10,7 +10,10 @@ const FaceLocal = (() => {
   const STORE_KEY = 'vista_face_local_v1';
   const LOG_KEY = 'vista_face_testlog_v1';
   const RETENTION_MS = 24 * 3600e3;
-  const MATCH = { threshold: 0.75, margin: 0.08 }; // keep in step with functions/lib.js
+  const MATCH = { threshold: 0.75, margin: 0.08 }; // strong match (keep in step with functions/lib.js)
+  /** "Possible match": a lower score is accepted only when this person is clearly ahead of
+   *  everyone else (e.g. glasses on/off, different lighting). The guard must check carefully. */
+  const POSSIBLE = { threshold: 0.65, margin: 0.12 };
 
   // ---------- Storage (fails safely if the browser blocks storage) ----------
   function read(key, fallback) {
@@ -34,7 +37,8 @@ const FaceLocal = (() => {
     return Array.from(new Float32Array(bytes.buffer));
   }
 
-  /** All saved templates, with expired ones removed. Old {e} and new {e, es} are supported. */
+  /** All saved templates, with expired ones removed. { visitId: { e: average, es: [each frame], name, at } }
+   *  Older records ({e} only, or {e, s}) are still supported. */
   function all() {
     const db = read(STORE_KEY, {});
     const now = Date.now();
@@ -54,7 +58,7 @@ const FaceLocal = (() => {
     if (!validEmbedding(embedding)) throw new Error('Invalid face data. Scan again.');
     const good = samples.filter(validEmbedding).slice(0, 5);
     const db = all();
-    // Keep e for backward compatibility; es holds the individual enrolled samples.
+    // e = average (backward compatible); es = the individual samples from check-in
     db[visitId] = { e: pack(embedding), es: good.map(pack), name, at: Date.now() };
     if (!write(STORE_KEY, db)) throw new Error('This browser could not save face data (storage blocked or full). Use manual instead.');
   }
@@ -68,36 +72,56 @@ const FaceLocal = (() => {
     if (!a || !b || a.length !== b.length) return 0;
     let sum = 0;
     for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; sum += d * d; }
-    const dist = 25 * sum;
+    const dist = 25 * sum; // unrounded for finer comparisons
     if (dist === 0) return 1;
     const norm = (1 - Math.sqrt(dist) / 100 - 0.2) / 0.6;
     return Math.max(Math.min(norm, 1), 0);
   }
 
+  /** Average of the two strongest scores against the saved frames (not one lucky hit). */
+  function top2(p, savedFrames) {
+    const scores = savedFrames.map((t) => similarity(p, t)).sort((a, b) => b - a);
+    return scores.length > 1 ? (scores[0] + scores[1]) / 2 : (scores[0] || 0);
+  }
+
   /**
-   * Compares a scan with saved templates. onlyIds: limit to these visits (e.g. visitors inside).
-   * Returns { status: 'match'|'unknown'|'ambiguous'|'none', visitId?, best, second }.
+   * Robust score between a new scan and one saved person.
+   * - Each new frame is compared with all saved frames (average of its 2 best scores).
+   * - The middle value (median) across new frames is used, so one blurry frame, glasses
+   *   glare or a shadow does not decide the result.
+   * - The averaged new scan is a second opinion; the higher of the two is kept.
+   */
+  function personScore(probe, saved) {
+    const encoded = [saved.e, ...(Array.isArray(saved.es) ? saved.es : []), ...(Array.isArray(saved.s) ? saved.s : [])]
+      .filter((x) => typeof x === 'string');
+    const savedFrames = [];
+    for (const x of encoded) { try { savedFrames.push(unpack(x)); } catch { /* skip damaged entry */ } }
+    if (!savedFrames.length) return 0;
+    const probeFrames = (probe.samples || probe.embeddings || []).filter(validEmbedding);
+    const perFrame = (probeFrames.length ? probeFrames : [probe.embedding]).map((p) => top2(p, savedFrames)).sort((a, b) => a - b);
+    const median = perFrame[Math.floor(perFrame.length / 2)];
+    return Math.max(median, top2(probe.embedding, savedFrames));
+  }
+
+  /**
+   * Compares a scan { embedding, samples } with saved people. onlyIds: limit to these visits.
+   * Returns { status: 'match'|'possible'|'unknown'|'ambiguous'|'none', visitId?, best, second }.
+   *  match    = strong (>= 78% and 8 points ahead of the next person)
+   *  possible = 65-78% but 12 points ahead of everyone else (guard checks carefully)
    */
   function match(probe, onlyIds = null) {
+    if (Array.isArray(probe)) probe = { embedding: probe, samples: [probe] };
     const db = all();
     const ids = Object.keys(db).filter((id) => !onlyIds || onlyIds.has(id));
     if (!ids.length) return { status: 'none', best: null, second: null };
-    const scored = ids.map((id) => {
-      const record = db[id];
-      const templates = [record.e, ...(Array.isArray(record.es) ? record.es : [])]
-        .filter((x) => typeof x === 'string');
-      const scores = templates.map((encoded) => {
-        try { return similarity(probe, unpack(encoded)); } catch { return 0; }
-      }).sort((a, b) => b - a);
-      // Average the two strongest references rather than trusting a single lucky hit.
-      const score = scores.length > 1 ? (scores[0] + scores[1]) / 2 : (scores[0] || 0);
-      return { id, score };
-    }).sort((a, b) => b.score - a.score);
+    const scored = ids.map((id) => ({ id, score: Math.round(100 * personScore(probe, db[id])) / 100 })).sort((a, b) => b.score - a.score);
     const best = scored[0].score;
     const second = scored[1] ? scored[1].score : 0;
-    if (best < MATCH.threshold) return { status: 'unknown', best, second };
-    if (best - second < MATCH.margin) return { status: 'ambiguous', best, second };
-    return { status: 'match', visitId: scored[0].id, best, second };
+    const gap = best - second;
+    if (best >= MATCH.threshold && gap >= MATCH.margin) return { status: 'match', visitId: scored[0].id, best, second };
+    if (best >= POSSIBLE.threshold && gap >= POSSIBLE.margin) return { status: 'possible', visitId: scored[0].id, best, second };
+    if (best >= POSSIBLE.threshold) return { status: 'ambiguous', best, second };
+    return { status: 'unknown', best, second };
   }
 
   // ---------- Test log (for accuracy testing; no face data) ----------
@@ -116,5 +140,5 @@ const FaceLocal = (() => {
     return `﻿${cols.join(',')}\r\n${rows.join('\r\n')}`;
   }
 
-  return { MATCH, save, remove, has, count, clear, all, match, similarity, log, logs, clearLog, logCsv };
+  return { MATCH, POSSIBLE, save, remove, has, count, clear, all, match, similarity, log, logs, clearLog, logCsv };
 })();
