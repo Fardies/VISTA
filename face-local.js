@@ -34,21 +34,28 @@ const FaceLocal = (() => {
     return Array.from(new Float32Array(bytes.buffer));
   }
 
-  /** All saved templates, with expired ones removed. { visitId: { e, name, at } } */
+  /** All saved templates, with expired ones removed. Old {e} and new {e, es} are supported. */
   function all() {
     const db = read(STORE_KEY, {});
     const now = Date.now();
     let changed = false;
     for (const [id, t] of Object.entries(db)) {
-      if (!t || !t.e || now - t.at > RETENTION_MS) { delete db[id]; changed = true; }
+      if (!t || (!t.e && !Array.isArray(t.es)) || !Number.isFinite(t.at) || now - t.at > RETENTION_MS) { delete db[id]; changed = true; }
     }
     if (changed) write(STORE_KEY, db);
     return db;
   }
 
-  function save(visitId, name, embedding) {
+  function validEmbedding(e) {
+    return Array.isArray(e) && e.length === 1024 && e.every(Number.isFinite);
+  }
+
+  function save(visitId, name, embedding, samples = []) {
+    if (!validEmbedding(embedding)) throw new Error('Invalid face data. Scan again.');
+    const good = samples.filter(validEmbedding).slice(0, 5);
     const db = all();
-    db[visitId] = { e: pack(embedding), name, at: Date.now() };
+    // Keep e for backward compatibility; es holds the individual enrolled samples.
+    db[visitId] = { e: pack(embedding), es: good.map(pack), name, at: Date.now() };
     if (!write(STORE_KEY, db)) throw new Error('This browser could not save face data (storage blocked or full). Use manual instead.');
   }
   function remove(visitId) { const db = all(); if (db[visitId]) { delete db[visitId]; write(STORE_KEY, db); } }
@@ -61,10 +68,10 @@ const FaceLocal = (() => {
     if (!a || !b || a.length !== b.length) return 0;
     let sum = 0;
     for (let i = 0; i < a.length; i++) { const d = a[i] - b[i]; sum += d * d; }
-    const dist = Math.round(100 * 25 * sum) / 100;
+    const dist = 25 * sum;
     if (dist === 0) return 1;
     const norm = (1 - Math.sqrt(dist) / 100 - 0.2) / 0.6;
-    return Math.round(100 * Math.max(Math.min(norm, 1), 0)) / 100;
+    return Math.max(Math.min(norm, 1), 0);
   }
 
   /**
@@ -75,7 +82,17 @@ const FaceLocal = (() => {
     const db = all();
     const ids = Object.keys(db).filter((id) => !onlyIds || onlyIds.has(id));
     if (!ids.length) return { status: 'none', best: null, second: null };
-    const scored = ids.map((id) => ({ id, score: similarity(probe, unpack(db[id].e)) })).sort((a, b) => b.score - a.score);
+    const scored = ids.map((id) => {
+      const record = db[id];
+      const templates = [record.e, ...(Array.isArray(record.es) ? record.es : [])]
+        .filter((x) => typeof x === 'string');
+      const scores = templates.map((encoded) => {
+        try { return similarity(probe, unpack(encoded)); } catch { return 0; }
+      }).sort((a, b) => b - a);
+      // Average the two strongest references rather than trusting a single lucky hit.
+      const score = scores.length > 1 ? (scores[0] + scores[1]) / 2 : (scores[0] || 0);
+      return { id, score };
+    }).sort((a, b) => b.score - a.score);
     const best = scored[0].score;
     const second = scored[1] ? scored[1].score : 0;
     if (best < MATCH.threshold) return { status: 'unknown', best, second };

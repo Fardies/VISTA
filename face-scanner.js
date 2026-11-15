@@ -34,9 +34,14 @@ const faceBackend = isLocalMode ? {
       e.code = 'already-exists';
       throw e;
     }
-    // Same visit record: pending -> in. Only normal visit fields go to Firestore.
-    await visitRef(v).update({ status: 'in', inAt: serverTime(), checkInMethod: 'face-local' });
-    FaceLocal.save(v.id, v.name, scan.embedding);
+    // Save locally first; do not mark a visitor inside if face storage fails.
+    FaceLocal.save(v.id, v.name, scan.embedding, scan.embeddings);
+    try {
+      await visitRef(v).update({ status: 'in', inAt: serverTime(), checkInMethod: 'face-local' });
+    } catch (err) {
+      FaceLocal.remove(v.id); // rollback if the attendance update fails
+      throw err;
+    }
     FaceLocal.log({ event: 'check-in', visitor: v.name, result: 'saved', ...scan.quality });
   },
   async match(scan) {

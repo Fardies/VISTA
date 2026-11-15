@@ -186,7 +186,9 @@ const VistaFace = (() => {
     };
     const spoofWarning = (quality.real != null && quality.real < SPOOF_WARN.real) || (quality.live != null && quality.live < SPOOF_WARN.live);
     onStatus('Face captured', 1);
-    return { embedding, quality, spoofWarning };
+    // Keep the original averaged embedding for the cloud backend and old callers.
+    // Local matching can additionally use the five verified individual samples.
+    return { embedding, embeddings: samples, quality, spoofWarning };
   }
 
   return { load, openCamera, stopCamera, capture, explainCameraError, FaceError, CAPTURE, VERSION };
