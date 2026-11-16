@@ -300,9 +300,10 @@ async function confirmFaceCheckIn(e) {
 
 /**
  * The new face looks like someone already inside. The guard checks IC and chooses:
- *  - Same person: do not check in again (registration stays pending).
- *  - Different person (e.g. a twin): manual check-in, and NO face is saved, so the
- *    two visitors can never be mixed up at check-out.
+ *  - Same person: Close. Nothing is checked in (the registration stays pending).
+ *  - Scan Again: try the scan again (e.g. a bad angle or light).
+ *  - Check In Manually: a different person (e.g. a twin). The guard must confirm, and NO face
+ *    is saved, so the two visitors can never be mixed up at check-out.
  */
 function showSimilarFace(other) {
   const v = faceUI.visit;
@@ -312,20 +313,28 @@ function showSimilarFace(other) {
   box.replaceChildren();
   const warn = document.createElement('p');
   warn.className = 'face-miss face-center';
-  warn.textContent = 'This face looks like someone inside.';
+  warn.textContent = `This face looks like ${other.name}, who is already inside.`;
   const choices = document.createElement('div');
   choices.className = 'face-choices';
   choices.append(choiceCard(other, 'Inside now', true));
-  box.append(warn, choices);
+  const ask = document.createElement('p');
+  ask.className = 'face-lead face-center';
+  ask.textContent = `Is ${v.name} the same person? If yes, press Close. If not, scan again or check in manually.`;
+  box.append(warn, choices, ask);
   box.hidden = false;
-  // Same person: the guard simply closes this window (registration stays pending).
   faceActions(
-    faceButton('Different Person', 'primary', async () => {
+    faceButton('Scan Again', 'primary', startFaceScan),
+    faceButton('Check In Manually', 'secondary', async () => {
+      if (!confirm(`Check in ${v.name} manually?\n\nNo face data will be saved, so check-out will also be manual.`)) return;
       try {
         await checkInVisit(v); // manual: no face saved for this visitor
-        FaceLocal.log({ event: 'similar face: different person', visitor: v.name, result: other.name });
+        FaceLocal.log({ event: 'similar face: manual check-in', visitor: v.name, result: other.name });
         faceDone(`✓ ${v.name} checked in (manual)`);
       } catch (err) { faceSetError(`Could not check in: ${err.message}`); }
+    }),
+    faceButton('Close', 'secondary', () => {
+      FaceLocal.log({ event: 'similar face: same person, not checked in', visitor: v.name, result: other.name });
+      closeFaceModal();
     }),
   );
 }
