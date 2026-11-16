@@ -40,6 +40,7 @@ const faceBackend = isLocalMode ? {
       const e = new Error(`This face looks like ${other.name}, who is inside.`);
       e.code = 'similar-face';
       e.other = other;
+      e.score = near.score;
       throw e;
     }
     // Save locally first; do not mark a visitor inside if face storage fails.
@@ -59,7 +60,9 @@ const faceBackend = isLocalMode ? {
     const v = r.visitId ? inside.find((x) => x.id === r.visitId) : null;
     FaceLocal.log({ event: 'check-out scan', visitor: v ? v.name : '', result: r.status, best: r.best, second: r.second, ...scan.quality });
     if (r.status === 'ambiguous') {
-      const candidates = (r.candidates || []).map((id) => inside.find((x) => x.id === id)).filter(Boolean).map(publicVisit);
+      const scores = {};
+      for (const x of FaceLocal.rank(scan, new Set(inside.map((y) => y.id)))) scores[x.id] = x.score;
+      const candidates = (r.candidates || []).map((id) => inside.find((x) => x.id === id)).filter(Boolean).map((x) => ({ ...publicVisit(x), score: scores[x.id] }));
       return candidates.length ? { status: 'ambiguous', best: r.best, second: r.second, candidates } : { status: 'unknown', best: r.best };
     }
     const found = r.status === 'match' || r.status === 'possible';
@@ -286,7 +289,7 @@ async function confirmFaceCheckIn(e) {
     faceUI.scan = null;
     faceDone(`✓ ${faceUI.visit.name} checked in`);
   } catch (err) {
-    if (err.code === 'similar-face') { showSimilarFace(err.other); return; }
+    if (err.code === 'similar-face') { showSimilarFace(err.other, err.score); return; }
     faceSetError(faceErrorText(err));
     if (faceOffline(err)) {
       // Backend not available: make manual check-in the obvious next step
@@ -305,21 +308,22 @@ async function confirmFaceCheckIn(e) {
  *  - Check In Manually: a different person (e.g. a twin). The guard must confirm, and NO face
  *    is saved, so the two visitors can never be mixed up at check-out.
  */
-function showSimilarFace(other) {
+function showSimilarFace(other, score) {
   const v = faceUI.visit;
   faceUI.scan = null;
   fEl('face-step').textContent = 'Check';
+  fEl('face-visitor').hidden = true; // the visitor's name is in the message below: keeps the screen short
   const box = fEl('face-result');
   box.replaceChildren();
   const warn = document.createElement('p');
   warn.className = 'face-miss face-center';
-  warn.textContent = `This face looks like ${other.name}, who is already inside.`;
+  warn.textContent = `${v.name} looks like ${other.name}, who is already inside.`;
   const choices = document.createElement('div');
   choices.className = 'face-choices';
-  choices.append(choiceCard(other, 'Inside now', true));
+  choices.append(choiceCard(other, score != null ? `Inside now · ${pctText(score)} similar` : 'Inside now', true));
   const ask = document.createElement('p');
   ask.className = 'face-lead face-center';
-  ask.textContent = `Is ${v.name} the same person? If yes, press Close. If not, scan again or check in manually.`;
+  ask.textContent = 'Same person? Press Close.';
   box.append(warn, choices, ask);
   box.hidden = false;
   faceActions(
@@ -338,6 +342,9 @@ function showSimilarFace(other) {
     }),
   );
 }
+
+/** 0.734 -> '73%' */
+function pctText(score) { return `${Math.round(score * 100)}%`; }
 
 /** One visitor shown as a centred card. selectable=false for a plain display card. */
 function choiceCard(v, note = '', display = false) {
@@ -421,8 +428,13 @@ async function findCheckOutMatch() {
     ['Checked In', inAt ? fmt.time(inAt) : '-'],
     ['Inside For', inAt ? fmt.duration(Date.now() - inAt.getTime()) : '-'],
   ]));
-  // Match and possible match look the same to the guard: just the visitor details.
-  // (Scores stay in the on-phone log for accuracy checks.)
+  // Similarity score (also saved in the on-phone log for accuracy checks)
+  if (res.score != null) {
+    const sc = document.createElement('p');
+    sc.className = 'face-quality face-center';
+    sc.textContent = `Similarity ${pctText(res.score)}${res.status === 'possible' ? ' · lower score, check carefully' : ''}`;
+    box.append(sc);
+  }
   const confirmBtn = faceButton('Confirm Check-Out', 'primary', confirmFaceCheckOut);
   faceActions(confirmBtn, faceButton('Not This Person', 'secondary', notThisPerson));
 }
@@ -443,7 +455,7 @@ function showCandidates(res) {
   list.setAttribute('aria-label', 'Possible visitors');
   const confirmBtn = faceButton('Confirm Check-Out', 'primary', confirmFaceCheckOut, true);
   for (const v of res.candidates) {
-    const card = choiceCard(v);
+    const card = choiceCard(v, v.score != null ? `${pctText(v.score)} similar` : '');
     card.addEventListener('click', () => {
       list.querySelectorAll('.face-choice').forEach((c) => c.setAttribute('aria-pressed', 'false'));
       card.setAttribute('aria-pressed', 'true');
