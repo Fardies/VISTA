@@ -109,10 +109,12 @@
       </div>
 
       <div class="manual-out" id="manual-out" hidden>
-        <p class="section-label" id="manual-out-label">Check out manually</p>
-        <p class="help-text left" id="manual-out-hint">No face data on this phone for these visitors. Check them out here when they leave.</p>
-        <div class="manual-list" id="manual-out-list"></div>
-        <button type="button" class="btn secondary" id="manual-out-more" hidden>Show all</button>
+        <div class="prototype-banner" id="manual-out-banner" role="status"><span id="manual-out-text"></span> <button type="button" class="back-link" id="manual-out-toggle" style="margin:0 0 0 6px;font-weight:700;color:#735218;text-decoration:underline">Show them</button></div>
+        <div id="manual-out-body" hidden>
+          <p class="help-text left" id="manual-out-hint">No face data on this phone for these visitors. Check them out here when they leave.</p>
+          <div class="manual-list" id="manual-out-list"></div>
+          <button type="button" class="btn secondary" id="manual-out-more" hidden>Show all</button>
+        </div>
       </div>
 
       <p class="section-label">Waiting for check-in</p>

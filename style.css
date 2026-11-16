@@ -156,6 +156,7 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.6}
 
 /* ---- Face Scanner tab: visitors to check out manually ---- */
 .manual-out{margin:0 0 22px}
+.manual-out .prototype-banner{margin-bottom:12px}
 .manual-list{display:grid;gap:8px;margin-bottom:10px}
 .manual-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #dce9dc;border-left:4px solid #2e7d55;border-radius:12px;padding:12px 14px;background:#fafcf9}
 .manual-row.is-long{border-left-color:#c8892a;background:#fffaf1}

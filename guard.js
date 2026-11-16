@@ -192,6 +192,7 @@ function buildCard(v, now) {
 // ---------- Face Scanner tab: visitors who must be checked out by hand ----------
 const MANUAL_OUT_LIMIT = 5;
 let showAllManualOut = false;
+let manualOutOpen = false; // the list starts closed so it never pushes 'Waiting for check-in' down
 
 /** Inside, but cannot be checked out by face on this phone (walk-in, manual check-in, other phone, expired). */
 function needsManualCheckOut() {
@@ -207,7 +208,9 @@ function renderManualOut(now) {
   const box = $('manual-out-list');
   box.replaceChildren();
   if (!list.length) return;
-  $('manual-out-label').textContent = `Check out manually (${list.length})`;
+  $('manual-out-text').textContent = `${list.length} visitor${list.length === 1 ? '' : 's'} need${list.length === 1 ? 's' : ''} manual check-out.`;
+  $('manual-out-toggle').textContent = manualOutOpen ? 'Hide them' : 'Show them';
+  $('manual-out-body').hidden = !manualOutOpen;
   const shown = showAllManualOut ? list : list.slice(0, MANUAL_OUT_LIMIT);
   for (const v of shown) {
     const ms = stayMs(v, now);
@@ -612,6 +615,7 @@ for (const id of ['search', 'status', 'from', 'to']) $(id).addEventListener(id =
 $('refresh').addEventListener('click', () => { if (authorized) { if (unsubscribe) unsubscribe(); subscribe(); } });
 $('reset-filters').addEventListener('click', () => { for (const id of ['search', 'from', 'to']) $(id).value = ''; $('status').value = 'all'; showEarlier = false; render(); });
 $('carry-toggle').addEventListener('click', () => { showEarlier = !showEarlier; render(); });
+$('manual-out-toggle').addEventListener('click', () => { manualOutOpen = !manualOutOpen; render(); });
 $('manual-out-more').addEventListener('click', () => { showAllManualOut = !showAllManualOut; render(); });
 // When the tab wakes up (e.g. next morning), re-check which day it is
 document.addEventListener('visibilitychange', () => { if (authorized && document.visibilityState === 'visible') render(); });
