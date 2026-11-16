@@ -108,6 +108,13 @@
         <button type="button" class="btn primary" id="scan-checkout">Scan Face to Check Out</button>
       </div>
 
+      <div class="manual-out" id="manual-out" hidden>
+        <p class="section-label" id="manual-out-label">Check out manually</p>
+        <p class="help-text left" id="manual-out-hint">No face data on this phone for these visitors. Check them out here when they leave.</p>
+        <div class="manual-list" id="manual-out-list"></div>
+        <button type="button" class="btn secondary" id="manual-out-more" hidden>Show all</button>
+      </div>
+
       <p class="section-label">Waiting for check-in</p>
       <div id="pending-list" class="record-list" aria-live="polite"></div>
     </div>

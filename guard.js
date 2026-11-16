@@ -189,6 +189,50 @@ function buildCard(v, now) {
   return card;
 }
 
+// ---------- Face Scanner tab: visitors who must be checked out by hand ----------
+const MANUAL_OUT_LIMIT = 5;
+let showAllManualOut = false;
+
+/** Inside, but cannot be checked out by face on this phone (walk-in, manual check-in, other phone, expired). */
+function needsManualCheckOut() {
+  const canFace = (v) => (window.faceCanCheckOut ? window.faceCanCheckOut(v) : false);
+  return visits
+    .filter((v) => state(v) === 'in' && !canFace(v))
+    .sort((a, b) => (toDate(a.inAt) || 0) - (toDate(b.inAt) || 0)); // inside the longest first
+}
+
+function renderManualOut(now) {
+  const list = needsManualCheckOut();
+  $('manual-out').hidden = !list.length;
+  const box = $('manual-out-list');
+  box.replaceChildren();
+  if (!list.length) return;
+  $('manual-out-label').textContent = `Check out manually (${list.length})`;
+  const shown = showAllManualOut ? list : list.slice(0, MANUAL_OUT_LIMIT);
+  for (const v of shown) {
+    const ms = stayMs(v, now);
+    const long = ms != null && ms > LONG_STAY_HOURS * 3600e3;
+    const rowEl = document.createElement('article');
+    rowEl.className = `manual-row${long ? ' is-long' : ''}`;
+    const who = document.createElement('div');
+    who.className = 'who';
+    const name = document.createElement('strong');
+    name.textContent = v.name;
+    const meta = document.createElement('small');
+    meta.textContent = [v.purpose, v.car, v.source === 'guard' ? 'Walk-in' : ''].filter(Boolean).join(' · ');
+    const inside = document.createElement('small');
+    inside.textContent = `In ${fmt.time(v.inAt) || '—'} · Inside for ${fmt.duration(ms)}`;
+    who.append(name, meta, inside);
+    rowEl.append(who, actionButton('Check Out', 'secondary btn-small',
+      () => `Confirm that ${v.name} has left the premises?\nCheck-out time will be recorded as now (${fmt.time(new Date())}).`,
+      () => checkOutVisit(v)));
+    box.append(rowEl);
+  }
+  const more = $('manual-out-more');
+  more.hidden = list.length <= MANUAL_OUT_LIMIT;
+  more.textContent = showAllManualOut ? 'Show fewer' : `Show all (${list.length})`;
+}
+
 function render() {
   const now = new Date();
 
@@ -233,6 +277,7 @@ function render() {
   } else {
     for (const v of queue) pl.append(buildCard(v, now));
   }
+  renderManualOut(now);
 
   // Visitor Records section
   const status = $('status').value;
@@ -567,6 +612,7 @@ for (const id of ['search', 'status', 'from', 'to']) $(id).addEventListener(id =
 $('refresh').addEventListener('click', () => { if (authorized) { if (unsubscribe) unsubscribe(); subscribe(); } });
 $('reset-filters').addEventListener('click', () => { for (const id of ['search', 'from', 'to']) $(id).value = ''; $('status').value = 'all'; showEarlier = false; render(); });
 $('carry-toggle').addEventListener('click', () => { showEarlier = !showEarlier; render(); });
+$('manual-out-more').addEventListener('click', () => { showAllManualOut = !showAllManualOut; render(); });
 // When the tab wakes up (e.g. next morning), re-check which day it is
 document.addEventListener('visibilitychange', () => { if (authorized && document.visibilityState === 'visible') render(); });
 

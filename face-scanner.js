@@ -87,10 +87,14 @@ const faceBackend = isLocalMode ? {
   },
 };
 
+/** Can this visitor (inside) be checked out by face on this phone? */
+function faceCanCheckOut(v) {
+  return isLocalMode ? FaceLocal.has(v.id) : Boolean(v.faceEnrolled);
+}
+
 /** Visitors inside who can check out by face (for the Face Scanner tab). */
 function faceInsideCount() {
-  if (isLocalMode) return visits.filter((v) => state(v) === 'in' && FaceLocal.has(v.id)).length;
-  return visits.filter((v) => state(v) === 'in' && v.faceEnrolled).length;
+  return visits.filter((v) => state(v) === 'in' && faceCanCheckOut(v)).length;
 }
 
 const faceUI = {
@@ -536,4 +540,5 @@ vistaAuth.onAuthStateChanged((user) => { if (!user || user.isAnonymous) closeFac
 
 window.openFaceCheckIn = (v) => openFaceModal('checkin', v);
 window.faceInsideCount = faceInsideCount;
+window.faceCanCheckOut = faceCanCheckOut;
 window.releaseFaceTemplate = releaseFaceTemplate;
