@@ -409,6 +409,20 @@ function fileTag() {
   return s && e ? (s === e ? s : `${s}_to_${e}`) : (s || e || 'All');
 }
 
+/** How the visitor came in: the report's "Entry Type" column. */
+function entryType(v) {
+  if (v.source === 'guard') return 'Walk-in (guard)';
+  const m = String(v.checkInMethod || '');
+  if (m.startsWith('face')) return 'Online · Face check-in';
+  if (m === 'manual') return 'Online · Manual check-in';
+  return 'Online registration'; // older records: the check-in method was not saved yet
+}
+/** How the visitor left: the report's "Check-Out" column. */
+function checkOutType(v) {
+  if (!v.outAt) return '—';
+  return String(v.checkOutMethod || '').startsWith('face') ? 'Face' : 'Manual';
+}
+
 function reportRows(list, now) {
   return list.map((v, i) => {
     const ms = stayMs(v, now);
@@ -423,7 +437,8 @@ function reportRows(list, now) {
       outTime: v.outAt ? fmt.time(v.outAt) : '—',
       stay: v.outAt ? fmt.duration(ms) : `${fmt.duration(ms)} (inside)`,
       status: v.outAt ? 'Checked Out' : 'Inside',
-      entry: v.source === 'guard' ? 'Walk-in (guard)' : 'Online registration',
+      entry: entryType(v),
+      checkOutBy: checkOutType(v),
     };
   });
 }
@@ -469,10 +484,10 @@ async function buildXlsx(list) {
   const cols = [
     ['No.', 'no', 6], ['Visitor Name', 'name', 30], ['Purpose of Visit', 'purpose', 24], ['Car Plate', 'car', 13],
     ['Check-In Date', 'inDate', 14], ['Check-In Time', 'inTime', 13], ['Check-Out Date', 'outDate', 14], ['Check-Out Time', 'outTime', 14],
-    ['Time on Site', 'stay', 17], ['Status', 'status', 14], ['Entry Type', 'entry', 17],
+    ['Time on Site', 'stay', 17], ['Status', 'status', 14], ['Entry Type', 'entry', 26], ['Check-Out', 'checkOutBy', 14],
   ];
   ws.columns = cols.map(([, key, width]) => ({ key, width }));
-  const last = String.fromCharCode(64 + cols.length); // K
+  const last = String.fromCharCode(64 + cols.length); // L
 
   // Title block
   ws.mergeCells(`A1:${last}1`);
@@ -536,7 +551,7 @@ async function buildXlsx(list) {
   });
 
   // Data rows
-  const center = new Set(['no', 'car', 'inDate', 'inTime', 'outDate', 'outTime', 'stay', 'status']);
+  const center = new Set(['no', 'car', 'inDate', 'inTime', 'outDate', 'outTime', 'stay', 'status', 'checkOutBy']);
   rows.forEach((data, i) => {
     const r = ws.getRow(HEADER + 1 + i);
     cols.forEach(([, key], c) => { r.getCell(c + 1).value = data[key]; });
@@ -575,8 +590,8 @@ function buildCsv(list) {
     ['VISTA - VISITOR REPORT'], ['Visitor Information & Smart Tracking Application'], [],
     ['Report Period', periodLabel()], ['Generated On', `${fmt.longDate(now)}, ${fmt.time(now)}`],
     ['Total Visits', sum.total], ['Currently Inside', sum.inside], ['Checked Out', sum.out], ['Average Time on Site', sum.avg], [],
-    ['No.', 'Visitor Name', 'Purpose of Visit', 'Car Plate', 'Check-In Date', 'Check-In Time', 'Check-Out Date', 'Check-Out Time', 'Time on Site', 'Status', 'Entry Type'],
-    ...reportRows(list, now).map((r) => [r.no, r.name, r.purpose, r.car, r.inDate, r.inTime, r.outDate, r.outTime, r.stay, r.status, r.entry]),
+    ['No.', 'Visitor Name', 'Purpose of Visit', 'Car Plate', 'Check-In Date', 'Check-In Time', 'Check-Out Date', 'Check-Out Time', 'Time on Site', 'Status', 'Entry Type', 'Check-Out'],
+    ...reportRows(list, now).map((r) => [r.no, r.name, r.purpose, r.car, r.inDate, r.inTime, r.outDate, r.outTime, r.stay, r.status, r.entry, r.checkOutBy]),
   ];
   return new Blob([`\uFEFF${lines.map((l) => l.map(cell).join(',')).join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
 }
