@@ -227,7 +227,39 @@ function cancelScan() {
 }
 
 // ---------- Scan ----------
+// ---------- Quick beep when a face is captured ----------
+// Short, soft tone made in code (no audio file). Android also vibrates; iPhone
+// Safari has no vibration for websites, so it only beeps. Phones on silent stay quiet.
+let beepCtx = null;
+function primeBeep() {
+  // Must run during a button tap, or iPhone blocks the sound
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!beepCtx) beepCtx = new Ctx();
+    if (beepCtx.state === 'suspended') beepCtx.resume();
+  } catch { /* no sound available */ }
+}
+function scanBeep() {
+  try { if (navigator.vibrate) navigator.vibrate(80); } catch { /* ignore */ }
+  try {
+    if (!beepCtx) return;
+    const t = beepCtx.currentTime;
+    const osc = beepCtx.createOscillator();
+    const gain = beepCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.18, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+    osc.connect(gain).connect(beepCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.15);
+  } catch { /* ignore */ }
+}
+
 async function startFaceScan() {
+  primeBeep();
   stopScan();
   const id = faceUI.scanId;
   const ctrl = new AbortController();
@@ -254,6 +286,7 @@ async function startFaceScan() {
     if (!current()) return;
     const scan = await VistaFace.capture(video, { onStatus: (t, p) => current() && faceStatus(t, p), signal: ctrl.signal });
     if (!current()) return;
+    scanBeep(); // face captured: tells the guard to look at the screen
     VistaFace.stopCamera(video);
     faceUI.abort = null;
     faceUI.scan = scan;
