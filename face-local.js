@@ -1,10 +1,14 @@
 'use strict';
-// LOCAL FACE MATCHING (Spark plan, no Cloud Functions)
-// Face templates are saved ONLY in this browser (localStorage) on the guard's phone.
-// Nothing biometric is uploaded to Firestore. Check-in and check-out must use the
-// same phone and browser. Templates are deleted at check-out or after 24 hours.
-// Matching rules are the same as functions/lib.js, so results carry over to the
-// Cloud Functions version later.
+// FACE MATCHING WITH SHARED TEMPLATES (Spark plan, no Cloud Functions)
+// Matching runs on the guard's phone (Human.js). The face templates (numbers, no photos)
+// are saved in Firestore collection "faceTemplatesShared", so ANY signed-in guard phone can
+// recognise a visitor that another guard phone checked in.
+//  - Only the operator account can read or write them (see firestore.rules). Visitors cannot.
+//  - Deleted at check-out (face or manual). Every template also has an expiry (24 hours);
+//    expired or leftover templates are removed by the guard app when it is open.
+//  - Templates made before this update stay in that phone's localStorage; they still work on
+//    that phone only, until check-out or 24 hours (they are never uploaded).
+// Matching rules are the same as functions/lib.js.
 
 const FaceLocal = (() => {
   const STORE_KEY = 'vista_face_local_v1';
@@ -37,9 +41,66 @@ const FaceLocal = (() => {
     return Array.from(new Float32Array(bytes.buffer));
   }
 
-  /** All saved templates, with expired ones removed. { visitId: { e: average, es: [each frame], name, at } }
-   *  Older records ({e} only, or {e, s}) are still supported. */
+  // ---------- Shared templates (Firestore) ----------
+  const SHARED = 'faceTemplatesShared';
+  let sharedDb = null;      // Firestore instance of the signed-in operator
+  let sharedUnsub = null;   // stops the live listener
+  let shared = {};          // { visitId: { e, es, expiresAt } } kept in memory only
+  let sharedReady = false;  // first snapshot received
+  let sharedError = '';     // why shared templates are unavailable (shown to the guard)
+  let onChange = () => {};
+
+  function sharedCol() { return sharedDb.collection(SHARED); }
+  function expiresMs(t) { return t && t.expiresAt && typeof t.expiresAt.toMillis === 'function' ? t.expiresAt.toMillis() : 0; }
+
+  /** Starts listening to the shared templates. Call once after the operator signs in. */
+  function connect(db, changed = () => {}) {
+    disconnect();
+    sharedDb = db;
+    onChange = changed;
+    sharedUnsub = sharedCol().onSnapshot((snap) => {
+      const next = {};
+      snap.forEach((doc) => { next[doc.id] = doc.data(); });
+      shared = next;
+      sharedReady = true;
+      sharedError = '';
+      onChange();
+    }, (err) => {
+      shared = {};
+      sharedReady = false;
+      sharedError = err && err.code === 'permission-denied'
+        ? 'Shared face storage is blocked. Publish the new firestore.rules, then refresh.'
+        : 'Shared face storage is not available. Check the internet, or use manual.';
+      onChange();
+    });
+  }
+  /** Stops listening and forgets every template held in memory (sign-out). */
+  function disconnect() {
+    if (sharedUnsub) { sharedUnsub(); sharedUnsub = null; }
+    sharedDb = null; shared = {}; sharedReady = false; sharedError = '';
+  }
+  const isReady = () => sharedReady;
+  /** True while connecting (no answer yet and no error). */
+  const loading = () => Boolean(sharedDb) && !sharedReady && !sharedError;
+  /** Plain-language reason shared face data cannot be used right now, or ''. */
+  function problem() {
+    if (sharedReady) return '';
+    return sharedError || 'Loading shared face data… try again in a few seconds.';
+  }
+
+  /** All usable templates: this phone's older local ones plus the shared ones (shared wins).
+   *  Expired entries are ignored. { visitId: { e: average, es: [each frame] } } */
   function all() {
+    const db = Object.assign({}, legacy());
+    const now = Date.now();
+    for (const [id, t] of Object.entries(shared)) {
+      if (t && typeof t.e === 'string' && expiresMs(t) > now) db[id] = t;
+    }
+    return db;
+  }
+
+  /** Templates saved in this browser by the older version (kept so existing visitors still work). */
+  function legacy() {
     const db = read(STORE_KEY, {});
     const now = Date.now();
     let changed = false;
@@ -54,15 +115,45 @@ const FaceLocal = (() => {
     return Array.isArray(e) && e.length === 1024 && e.every(Number.isFinite);
   }
 
-  function save(visitId, name, embedding, samples = []) {
+  /** Adds "save this visitor's face template" to a Firestore batch (commit it together with the check-in). */
+  function queueSave(batch, visitId, embedding, samples = []) {
+    if (!sharedReady) throw new Error(problem());
     if (!validEmbedding(embedding)) throw new Error('Invalid face data. Scan again.');
     const good = samples.filter(validEmbedding).slice(0, 5);
-    const db = all();
-    // e = average (backward compatible); es = the individual samples from check-in
-    db[visitId] = { e: pack(embedding), es: good.map(pack), name, at: Date.now() };
-    if (!write(STORE_KEY, db)) throw new Error('This browser could not save face data (storage blocked or full). Use manual instead.');
+    batch.set(sharedCol().doc(visitId), {
+      e: pack(embedding),
+      es: good.map(pack),
+      expiresAt: firebase.firestore.Timestamp.fromMillis(Date.now() + RETENTION_MS),
+    });
   }
-  function remove(visitId) { const db = all(); if (db[visitId]) { delete db[visitId]; write(STORE_KEY, db); } }
+  /** Adds "delete this visitor's face template" to a Firestore batch (commit it together with the check-out). */
+  function queueDelete(batch, visitId) {
+    if (sharedDb) batch.delete(sharedCol().doc(visitId));
+  }
+  /** Forgets a visitor's template on this phone (memory + older local copy) after a successful delete. */
+  function forgetLocal(visitId) {
+    delete shared[visitId];
+    const db = read(STORE_KEY, {});
+    if (db[visitId]) { delete db[visitId]; write(STORE_KEY, db); }
+  }
+  /** Deletes a visitor's template everywhere (shared + this phone). Rejects if the shared delete fails. */
+  async function remove(visitId) {
+    if (sharedDb) await sharedCol().doc(visitId).delete();
+    forgetLocal(visitId);
+  }
+  /** Removes expired templates, and templates of visits that are finished (isFinished(visitId) true). */
+  let purging = false;
+  async function purge(isFinished) {
+    if (!sharedDb || !sharedReady || purging) return 0;
+    purging = true;
+    try {
+      const now = Date.now();
+      const ids = Object.keys(shared).filter((id) => expiresMs(shared[id]) <= now || isFinished(id));
+      let n = 0;
+      for (const id of ids) { try { await remove(id); n++; } catch { /* try again next time */ } }
+      return n;
+    } finally { purging = false; }
+  }
   function has(visitId) { return Boolean(all()[visitId]); }
   function count() { return Object.keys(all()).length; }
   function clear() { try { localStorage.removeItem(STORE_KEY); } catch { /* ignore */ } }
@@ -157,5 +248,5 @@ const FaceLocal = (() => {
     return `﻿${cols.join(',')}\r\n${rows.join('\r\n')}`;
   }
 
-  return { MATCH, POSSIBLE, rank, similar, save, remove, has, count, clear, all, match, similarity, log, logs, clearLog, logCsv };
+  return { MATCH, POSSIBLE, connect, disconnect, isReady, loading, problem, queueSave, queueDelete, forgetLocal, remove, purge, rank, similar, has, count, clear, all, match, similarity, log, logs, clearLog, logCsv };
 })();

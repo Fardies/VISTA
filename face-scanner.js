@@ -8,8 +8,9 @@
 
 /**
  * FACE_MODE
- *  'local' = Local face matching (Spark plan). Templates stay on the guard's
- *            phone only (face-local.js); nothing biometric goes to Firestore.
+ *  'local' = Face matching on the guard's phone (Spark plan). Face templates are saved in
+ *            Firestore "faceTemplatesShared" (operator-only, deleted at check-out), so any
+ *            guard phone can check out a visitor that another phone checked in (face-local.js).
  *  'cloud' = Cloud Functions backend (functions/, needs Blaze). Templates are
  *            encrypted and matched on the server.
  */
@@ -43,18 +44,16 @@ const faceBackend = isLocalMode ? {
       e.score = near.score;
       throw e;
     }
-    // Save locally first; do not mark a visitor inside if face storage fails.
-    FaceLocal.save(v.id, v.name, scan.embedding, scan.samples || scan.embeddings || []);
-    try {
-      // Same visit record: pending -> in. Only normal visit fields go to Firestore.
-      await visitRef(v).update({ status: 'in', inAt: serverTime(), checkInMethod: 'face-local' });
-    } catch (err) {
-      FaceLocal.remove(v.id); // roll back if the attendance update fails
-      throw err;
-    }
+    // One batch = the face template and the check-in are saved together (both or neither),
+    // so a visitor is never marked inside without a template, or the other way round.
+    const batch = vistaDb.batch();
+    FaceLocal.queueSave(batch, v.id, scan.embedding, scan.samples || scan.embeddings || []);
+    batch.update(visitRef(v), { status: 'in', inAt: serverTime(), checkInMethod: 'face-local' });
+    await batch.commit();
     FaceLocal.log({ event: 'check-in', visitor: v.name, result: 'saved', ...scan.quality });
   },
   async match(scan) {
+    if (!FaceLocal.isReady()) throw new Error(FaceLocal.problem());
     const inside = visits.filter((x) => state(x) === 'in');
     const r = FaceLocal.match(scan, new Set(inside.map((x) => x.id)));
     const v = r.visitId ? inside.find((x) => x.id === r.visitId) : null;
@@ -70,12 +69,23 @@ const faceBackend = isLocalMode ? {
     return { status: r.status, score: r.best, second: r.second, visit: publicVisit(v) };
   },
   async confirmOut(m) {
-    await visitRef({ id: m.visit.id }).update({ status: 'out', outAt: serverTime(), checkOutMethod: 'face-local' });
-    FaceLocal.remove(m.visit.id);
+    // Check-out and deleting the face template are one batch (both or neither).
+    const batch = vistaDb.batch();
+    batch.update(visitRef({ id: m.visit.id }), { status: 'out', outAt: serverTime(), checkOutMethod: 'face-local' });
+    FaceLocal.queueDelete(batch, m.visit.id);
+    await batch.commit();
+    FaceLocal.forgetLocal(m.visit.id);
     FaceLocal.log({ event: 'check-out confirmed', visitor: m.visit.name, result: 'correct person', best: m.score, second: m.second });
   },
   rejected(m) { FaceLocal.log({ event: 'not this person', visitor: m.visit.name, result: 'wrong person', best: m.score, second: m.second }); },
-  release(v) { FaceLocal.remove(v.id); },
+  // Manual check-out or cancel: the visit is already saved, so delete the template now.
+  // If that fails the visitor is still checked out; the clean-up below removes it later.
+  release(v) {
+    FaceLocal.remove(v.id).catch((err) => {
+      console.warn('Face template delete failed; clean-up will retry.', err.message);
+      setError('dashboard-error', 'Checked out, but this visitor\'s face data could not be deleted yet. It will be removed automatically.');
+    });
+  },
 } : {
   enroll: (v, scan) => callFace('faceEnrollCheckIn', { visitId: v.id, embedding: scan.embedding, quality: scan.quality }),
   match: (scan) => callFace('faceMatchCheckOut', { embedding: scan.embedding, quality: scan.quality }),
@@ -89,7 +99,8 @@ const faceBackend = isLocalMode ? {
 
 /** Can this visitor (inside) be checked out by face on this phone? */
 function faceCanCheckOut(v) {
-  return isLocalMode ? FaceLocal.has(v.id) : Boolean(v.faceEnrolled);
+  // While shared face data is still loading, do not list everyone as "manual only"
+  return isLocalMode ? (FaceLocal.has(v.id) || FaceLocal.loading()) : Boolean(v.faceEnrolled);
 }
 
 /** Visitors inside who can check out by face (for the Face Scanner tab). */
@@ -531,12 +542,27 @@ fEl('face-flip').addEventListener('click', async () => {
 });
 fEl('scan-checkout').addEventListener('click', () => openFaceModal('checkout'));
 
-if (isLocalMode) fEl('face-note').textContent = 'No photo saved. Face data stays on this phone and is deleted at check-out.';
+if (isLocalMode) fEl('face-note').textContent = 'No photo saved. Face data is shared with signed-in guards only and deleted at check-out.';
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !fEl('face-modal').hidden) closeFaceModal(); });
 // Phones stop the camera when the browser goes to the background; cancel cleanly.
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && faceUI.abort) cancelScan(); });
-// Signing out closes the scanner
-vistaAuth.onAuthStateChanged((user) => { if (!user || user.isAnonymous) closeFaceModal(); });
+// Signing out closes the scanner and forgets all face data held in memory.
+// Signing in as the operator starts listening to the shared face templates.
+vistaAuth.onAuthStateChanged((user) => {
+  if (!user || user.isAnonymous) { closeFaceModal(); if (isLocalMode) FaceLocal.disconnect(); return; }
+  if (isLocalMode && (user.email || '').toLowerCase() === OPERATOR_EMAIL) {
+    FaceLocal.connect(vistaDb, () => { faceCleanup(); render(); });
+  }
+});
+
+/** Deletes expired templates and templates of visitors already checked out or cancelled
+ *  (e.g. a delete that failed earlier). Only acts on proof: the visit must be loaded and finished. */
+function faceCleanup() {
+  if (!isLocalMode || !authorized) return;
+  const done = new Set(visits.filter((x) => ['out', 'cancelled'].includes(state(x))).map((x) => x.id));
+  FaceLocal.purge((id) => done.has(id)).catch(() => {});
+}
+setInterval(faceCleanup, 60000);
 
 window.openFaceCheckIn = (v) => openFaceModal('checkin', v);
 window.faceInsideCount = faceInsideCount;
