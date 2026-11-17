@@ -5,8 +5,8 @@ rules_version = '2';
 //
 // Flow (Option A): visitor registers (pending) -> guard checks in (face or manual)
 // -> guard checks out (face or manual). All in the SAME visits/{visitId} record.
-// Face templates are written and read ONLY by Cloud Functions (Admin SDK), which
-// bypass these rules. Browsers can never read or write faceTemplates.
+// Face templates: "faceTemplates" is for Cloud Functions only (locked). The Spark version
+// uses "faceTemplatesShared", which only the signed-in operator account can read or write.
 service cloud.firestore {
   match /databases/{database}/documents {
     // Operator account in Firebase Authentication. If you change this email,
@@ -94,9 +94,37 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Biometric face templates: Cloud Functions only. No browser access at all.
+    // Biometric face templates written by the Cloud Functions version (Blaze). Not used
+    // by the Spark version; kept locked so no browser can ever touch them.
     match /faceTemplates/{visitId} {
       allow read, write: if false;
+    }
+
+    // Shared face templates (Spark version). Numbers only, no photos.
+    //  - Read / create / replace / delete: ONLY the signed-in operator account.
+    //  - Visitors (anonymous) and signed-out users have no access at all.
+    //  - A template can only be saved for a visit that exists, is pending or inside, and
+    //    whose visitor ticked the face consent box.
+    //  - It must carry an expiry of at most 25 hours from now (the app uses 24 hours).
+    function validTemplate(visitId) {
+      let d = request.resource.data;
+      let v = get(/databases/$(database)/documents/visits/$(visitId)).data;
+      return d.keys().hasOnly(['e', 'es', 'expiresAt'])
+        && d.keys().hasAll(['e', 'es', 'expiresAt'])
+        && d.e is string && d.e.size() > 0 && d.e.size() <= 6000
+        && d.es is list && d.es.size() <= 5
+        && d.expiresAt is timestamp
+        && d.expiresAt > request.time
+        && d.expiresAt <= request.time + duration.value(25, 'h')
+        && v.get('faceConsent', false) == true
+        && v.get('status', null) in ['pending', 'in'];
+    }
+    match /faceTemplatesShared/{visitId} {
+      allow get, list: if isOperator();
+      allow create, update: if isOperator()
+        && exists(/databases/$(database)/documents/visits/$(visitId))
+        && validTemplate(visitId);
+      allow delete: if isOperator();
     }
 
     // Face audit log (scores and outcomes, no biometric data). Read-only for the
