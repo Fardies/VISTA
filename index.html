@@ -44,6 +44,10 @@
         <input id="visitor-name" name="visitorName" type="text" autocomplete="name" maxlength="100" placeholder="Full name as in IC" required aria-describedby="visitor-name-error">
         <p class="field-error" id="visitor-name-error" hidden></p>
 
+        <label for="visitor-phone">Phone Number <span class="optional">(Optional)</span></label>
+        <input id="visitor-phone" name="visitorPhone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="e.g. 012-345 6789" aria-describedby="visitor-phone-error">
+        <p class="field-error" id="visitor-phone-error" hidden></p>
+
         <label for="visit-purpose">Purpose of Visit <span class="required">*</span></label>
         <select id="visit-purpose" name="purpose" required aria-describedby="visit-purpose-error">
           <option value="">Select purpose</option>
@@ -82,6 +86,7 @@
       <p class="intro" id="success-intro">Please go to the security guard to complete your check-in. You are not checked in until the guard confirms it.</p>
       <div class="details-card">
         <div><span>Name</span><strong id="summary-name"></strong></div>
+        <div><span>Phone</span><strong id="summary-phone"></strong></div>
         <div><span>Purpose</span><strong id="summary-purpose"></strong></div>
         <div><span>Car Plate</span><strong id="summary-car"></strong></div>
         <div><span>Registered</span><strong id="summary-registered"></strong></div>

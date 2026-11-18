@@ -26,7 +26,7 @@ const isLocalMode = FACE_MODE === 'local';
 /** Visitor fields shown on the check-out screen. */
 function publicVisit(v) {
   const inAt = toDate(v.inAt);
-  return { id: v.id, name: v.name, purpose: v.purpose, car: v.car, inAt: inAt ? inAt.toISOString() : null };
+  return { id: v.id, name: v.name, phone: v.phone || '', purpose: v.purpose, car: v.car, inAt: inAt ? inAt.toISOString() : null };
 }
 
 /** The two backends do the same 4 jobs; the screens below do not care which one runs. */
@@ -158,7 +158,7 @@ function faceActions(...buttons) { fEl('face-actions').replaceChildren(...button
 function detailsList(v, extra = []) {
   const box = document.createElement('div');
   box.className = 'details-card face-details';
-  const rows = [['Name', v.name], ['Purpose', v.purpose || '-'], ['Car Plate', v.car || '-'], ...extra];
+  const rows = [['Name', v.name], ['Phone', v.phone || '-'], ['Purpose', v.purpose || '-'], ['Car Plate', v.car || '-'], ...extra];
   for (const [k, val] of rows) {
     const d = document.createElement('div');
     const s = document.createElement('span'); s.textContent = k;

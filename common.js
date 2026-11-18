@@ -78,6 +78,20 @@ const clean = {
     return '';
   },
 
+  /** "012-345 6789" -> "0123456789", "+60 12-345 6789" -> "+60123456789" (digits and a leading + only). */
+  phone(s) {
+    const t = String(s || '').trim();
+    const digits = t.replace(/\D/g, '');
+    return (t.startsWith('+') ? '+' : '') + digits;
+  },
+
+  /** Returns an error message, or '' when valid. Pass required=true on the visitor form. */
+  phoneError(s, required = false) {
+    if (!s) return required ? 'Please enter your phone number.' : '';
+    if (!/^\+?\d{9,15}$/.test(s)) return 'Phone number looks incorrect. Example: 012-345 6789 or +60 12-345 6789.';
+    return '';
+  },
+
   purpose(s) { return String(s || '').replace(/\s+/g, ' ').trim(); },
 };
 
