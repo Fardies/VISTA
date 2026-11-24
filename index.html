@@ -44,10 +44,6 @@
         <input id="visitor-name" name="visitorName" type="text" autocomplete="name" maxlength="100" placeholder="Full name as in IC" required aria-describedby="visitor-name-error">
         <p class="field-error" id="visitor-name-error" hidden></p>
 
-        <label for="visitor-phone">Phone Number <span class="optional">(Optional)</span></label>
-        <input id="visitor-phone" name="visitorPhone" type="tel" inputmode="tel" autocomplete="tel" maxlength="20" placeholder="e.g. 012-345 6789" aria-describedby="visitor-phone-error">
-        <p class="field-error" id="visitor-phone-error" hidden></p>
-
         <label for="visit-purpose">Purpose of Visit <span class="required">*</span></label>
         <select id="visit-purpose" name="purpose" required aria-describedby="visit-purpose-error">
           <option value="">Select purpose</option>
@@ -69,10 +65,13 @@
         <input id="car-plate" name="carPlate" type="text" maxlength="20" placeholder="e.g. TAA 1234" autocapitalize="characters" autocomplete="off" aria-describedby="car-plate-error">
         <p class="field-error" id="car-plate-error" hidden></p>
 
-        <label class="check-row" for="face-consent">
-          <input id="face-consent" name="faceConsent" type="checkbox">
-          <span>I agree to a face scan for check-in and check-out.</span>
-        </label>
+        <div class="info-panel photo-notice" role="note">
+          <span aria-hidden="true">📷</span>
+          <div>
+            <strong>Your photo will be taken</strong>
+            <p>For security, the guard will take your photo and scan your face when you check in. Your photo is used only by security staff to know who is inside the building. It is deleted when you check out, or after 7 days at most.</p>
+          </div>
+        </div>
 
         <p class="form-error" id="checkin-error" role="alert" hidden></p>
         <button type="submit" class="btn primary">Submit Registration <span aria-hidden="true">→</span></button>
@@ -86,7 +85,6 @@
       <p class="intro" id="success-intro">Please go to the security guard to complete your check-in. You are not checked in until the guard confirms it.</p>
       <div class="details-card">
         <div><span>Name</span><strong id="summary-name"></strong></div>
-        <div><span>Phone</span><strong id="summary-phone"></strong></div>
         <div><span>Purpose</span><strong id="summary-purpose"></strong></div>
         <div><span>Car Plate</span><strong id="summary-car"></strong></div>
         <div><span>Registered</span><strong id="summary-registered"></strong></div>

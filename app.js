@@ -1,8 +1,9 @@
 'use strict';
 // VISTA visitor portal: Firebase anonymous auth.
 // The visitor only REGISTERS. The security guard completes check-in and check-out.
-// Saved per registration: ownerUid, name, phone, purpose, car, status ('pending'), createdAt,
-// inAt (null until the guard checks the visitor in), outAt (null), faceConsent (the tick box: true or false).
+// Saved per registration: ownerUid, name, purpose, car, status ('pending'), createdAt,
+// inAt (null until the guard checks the visitor in), outAt (null), faceConsent (true: the visitor was
+// shown the photo / face scan notice on the form; there is no tick box any more).
 // One phone can register many visits (for example for workers who have no phone).
 
 const $ = (id) => document.getElementById(id);
@@ -25,9 +26,7 @@ const purpose = $('visit-purpose');
 const other = $('other-purpose');
 const otherWrap = $('other-purpose-wrap');
 const nameInput = $('visitor-name');
-const phoneInput = $('visitor-phone');
 const carInput = $('car-plate');
-const faceConsent = $('face-consent');
 
 purpose.addEventListener('change', () => {
   otherWrap.hidden = purpose.value !== 'Other';
@@ -38,8 +37,6 @@ purpose.addEventListener('change', () => {
 
 // Tidy values as the visitor types, so records are consistent
 nameInput.addEventListener('blur', () => { nameInput.value = clean.name(nameInput.value); fieldError(nameInput, ''); });
-phoneInput.addEventListener('blur', () => { phoneInput.value = clean.phone(phoneInput.value); });
-phoneInput.addEventListener('input', () => fieldError(phoneInput, ''));
 carInput.addEventListener('input', () => {
   const pos = carInput.value.length;
   carInput.value = clean.plate(carInput.value);
@@ -78,7 +75,6 @@ function showSummary(v) {
     ? 'The security guard will check you out when you leave.'
     : 'Please go to the security guard to complete your check-in. You are not checked in until the guard confirms it.';
   $('summary-name').textContent = v.name;
-  $('summary-phone').textContent = v.phone || 'Not provided';
   $('summary-purpose').textContent = v.purpose;
   $('summary-car').textContent = v.car || 'Not provided';
   $('summary-registered').textContent = fmt.dateTime(v.createdAt) || fmt.dateTime(new Date());
@@ -101,17 +97,14 @@ $('checkin-form').addEventListener('submit', async (e) => {
   setFormError('');
 
   const name = clean.name(nameInput.value);
-  const phone = clean.phone(phoneInput.value);
   const p = clean.purpose(purpose.value === 'Other' ? other.value : purpose.value);
   const car = clean.plate(carInput.value);
   nameInput.value = name;
-  phoneInput.value = phone;
   carInput.value = car;
 
   // Field-by-field validation with clear messages
   const errors = [
     [nameInput, clean.nameError(name)],
-    [phoneInput, clean.phoneError(phone)], // optional
     [purpose, purpose.value ? '' : 'Please select the purpose of your visit.'],
     [other, purpose.value === 'Other' && p.length < 3 ? 'Please describe the purpose (at least 3 characters).' : ''],
     [carInput, clean.plateError(car)],
@@ -130,11 +123,10 @@ $('checkin-form').addEventListener('submit', async (e) => {
     const doc = vistaVisitorDb.collection('visits').doc();
     await doc.set({
       ownerUid: user.uid, name, purpose: p, car,
-      ...(phone ? { phone } : {}),   // optional: the field is left out when empty
       status: 'pending',
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       inAt: null, outAt: null,
-      faceConsent: faceConsent.checked === true   // the tick box: true only if the visitor ticked it
+      faceConsent: true   // photo and face scan notice shown on the form (no tick box)
     });
     const saved = await doc.get();
     showSummary({ id: doc.id, ...saved.data() });

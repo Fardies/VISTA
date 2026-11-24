@@ -11,6 +11,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-functions-compat.js" defer></script>
   <script src="firebase-config.js" defer></script>
   <script src="common.js" defer></script>
+  <script src="photo.js" defer></script>
   <script src="guard.js" defer></script>
   <script src="face.js" defer></script>
   <script src="face-local.js" defer></script>
@@ -61,16 +62,20 @@
       <div><strong id="total">0</strong><small>Total Visits</small></div>
     </div>
 
+    <details class="inside-gallery" id="inside-gallery" hidden>
+      <summary><span id="inside-gallery-title">Still inside</span> <small>Tap to see photos</small></summary>
+      <p class="help-text left" id="inside-gallery-hint">Everyone still checked in (all days). Tap a photo to see it bigger.</p>
+      <div class="gallery-grid" id="inside-gallery-grid"></div>
+    </details>
+
     <div class="prototype-banner" id="carry-over" role="status" hidden><span id="carry-text"></span> <button type="button" class="back-link" id="carry-toggle" style="margin:0 0 0 6px;font-weight:700;color:#735218;text-decoration:underline">Show them</button></div>
 
     <details class="manual-checkin">
       <summary>Register Walk-in Visitor <small>(guard enters visitor details)</small></summary>
-      <p class="intro">Use this when a visitor cannot use their own phone. Check-in time is recorded automatically. To check this visitor out later, use the Manual Check-Out button on their record.</p>
+      <p class="intro">Use this when a visitor cannot use their own phone. After you press the button, take the visitor's photo (required). Check-in time is recorded automatically. To check this visitor out later, use the Manual Check-Out button on their record.</p>
       <form id="manual-form" novalidate>
         <label for="manual-name">Visitor Name <span class="required">*</span></label>
         <input id="manual-name" type="text" maxlength="100" placeholder="Full name as in IC" autocomplete="off" required>
-        <label for="manual-phone">Phone Number <span class="optional">(Optional)</span></label>
-        <input id="manual-phone" type="tel" inputmode="tel" maxlength="20" placeholder="e.g. 012-345 6789" autocomplete="off">
         <label for="manual-purpose">Purpose of Visit <span class="required">*</span></label>
         <select id="manual-purpose" required><option value="">Select purpose</option><option>Meeting</option><option>Maintenance / Service</option><option>Delivery</option><option>Interview</option><option>Other</option></select>
         <div id="manual-other-wrap" hidden><label for="manual-other">Please specify <span class="required">*</span></label><input id="manual-other" type="text" maxlength="120" placeholder="Enter purpose" autocomplete="off"></div>
@@ -78,7 +83,7 @@
         <input id="manual-car" type="text" maxlength="20" placeholder="e.g. TAA 1234" autocapitalize="characters" autocomplete="off">
         <p class="form-error" id="manual-error" role="alert" hidden></p>
         <p class="help-text" id="manual-success" role="status" hidden></p>
-        <button type="submit" class="btn primary" id="manual-submit">Save Walk-in Check-In</button>
+        <button type="submit" class="btn primary" id="manual-submit">Take Photo &amp; Check In</button>
       </form>
     </details>
 
@@ -158,7 +163,37 @@
     <div class="face-result" id="face-result" aria-live="polite" hidden></div>
     <p class="form-error" id="face-error" role="alert" hidden></p>
     <div class="face-actions" id="face-actions"></div>
-    <p class="face-note" id="face-note">No photo saved. Face data deleted at check-out.</p>
+    <p class="face-note" id="face-note">A photo is saved at check-in for guards. Photo and face data are deleted at check-out.</p>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="photo-modal" hidden>
+  <div class="modal-sheet face-sheet" role="dialog" aria-modal="true" aria-labelledby="photo-title">
+    <div class="modal-bar"><button type="button" class="modal-link cancel" id="photo-cancel">Cancel</button><span class="face-step" id="photo-step"></span></div>
+    <h2 id="photo-title">Visitor Photo</h2>
+    <p class="face-lead" id="photo-name"></p>
+    <div class="face-camera" id="photo-camera" hidden>
+      <video id="photo-video" playsinline muted autoplay></video>
+      <div class="face-guide" aria-hidden="true"></div>
+      <button type="button" class="face-flip" id="photo-flip" aria-label="Switch between front and back camera">⟲ Flip</button>
+    </div>
+    <div class="photo-preview" id="photo-preview" hidden>
+      <img id="photo-preview-img" alt="Photo preview">
+      <p class="face-lead face-center">Is the face clear?</p>
+    </div>
+    <p class="form-error" id="photo-error" role="alert" hidden></p>
+    <div class="face-actions" id="photo-actions"></div>
+    <input type="file" id="photo-file" accept="image/*" capture="environment" hidden>
+    <p class="face-note">Photo is for guards only. Deleted at check-out, or after 7 days at most.</p>
+  </div>
+</div>
+
+<div class="modal-backdrop photo-view" id="photo-view" hidden>
+  <div class="modal-sheet photo-view-sheet" role="dialog" aria-modal="true" aria-labelledby="photo-view-name">
+    <div class="modal-bar"><button type="button" class="modal-link cancel" id="photo-view-close">Close</button></div>
+    <img id="photo-view-img" alt="">
+    <h2 id="photo-view-name"></h2>
+    <p class="face-lead face-center" id="photo-view-meta"></p>
   </div>
 </div>
 </body>

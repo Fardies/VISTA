@@ -1,8 +1,9 @@
 'use strict';
 // VISTA face engine: Human.js in the guard's phone browser.
 // - Opens the camera, checks there is exactly ONE clear face, and turns it into a
-//   face template (1024 numbers). No photo is saved or uploaded; video frames stay
-//   on the phone and the camera is switched off after each scan.
+//   face template (1024 numbers). This file saves no photo; at check-in, face-scanner.js
+//   takes ONE small visitor photo from the camera (photo.js). The camera is switched off
+//   after each scan.
 // - Matching and storage happen in Cloud Functions (see functions/), never here.
 // Needs HTTPS (GitHub Pages is fine) or http://localhost.
 
@@ -162,6 +163,7 @@ const VistaFace = (() => {
     const h = await load(onStatus);
     const started = Date.now();
     const samples = [], scores = [];
+    let box = null; // face position in the last good frame (used to centre the visitor photo)
     onStatus('Point at the visitor\'s face', 0);
 
     while (samples.length < CAPTURE.samples) {
@@ -188,6 +190,7 @@ const VistaFace = (() => {
         else {
           samples.push(Array.from(f.embedding));
           scores.push(f.score);
+          box = Array.isArray(f.boxRaw) ? f.boxRaw.slice(0, 4) : null;
           hint = `Scanning ${samples.length}/${CAPTURE.samples}`;
         }
       }
@@ -211,7 +214,7 @@ const VistaFace = (() => {
     };
     onStatus('Face captured', 1);
     // embedding = average (cloud backend and old callers); samples/embeddings = the 5 verified frames
-    return { embedding, samples, embeddings: samples, quality };
+    return { embedding, samples, embeddings: samples, quality, box };
   }
 
   return { load, openCamera, stopCamera, capture, explainCameraError, FaceError, CAPTURE, VERSION };

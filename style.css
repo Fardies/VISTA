@@ -164,3 +164,43 @@ input[type=date]::-webkit-calendar-picker-indicator{opacity:.6}
 .manual-row strong{display:block;font-size:15px;color:#173c32;overflow-wrap:anywhere}
 .manual-row small{display:block;font-size:12px;color:#6a7d72;margin-top:2px}
 .manual-row .btn{flex-shrink:0}
+/* ---- Visitor photos ---- */
+.photo-thumb{flex-shrink:0;display:block;padding:0;border:1px solid #d3e1d6;border-radius:10px;overflow:hidden;background:#eef5ee;cursor:zoom-in;aspect-ratio:4/5}
+.photo-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.photo-thumb:focus-visible{outline:3px solid #c49c59;outline-offset:2px}
+.photo-thumb.empty{display:grid;place-items:center;cursor:default;color:#8a9a8e;font-size:10px;font-weight:700;text-align:center;line-height:1.2;border-style:dashed;padding:4px}
+.photo-sm{width:40px}
+.photo-md{width:56px}
+.photo-lg{width:100%}
+.photo-xl{width:150px;margin:0 auto 12px}
+.record-head.has-photo{flex-wrap:nowrap}
+.record-head.has-photo h3{flex:1;min-width:0;overflow-wrap:anywhere;align-self:center}
+.record-head.has-photo .badges{max-width:45%;justify-content:flex-end}
+@media(max-width:540px){.record-head.has-photo{flex-wrap:wrap}.record-head.has-photo h3{flex-basis:calc(100% - 70px)}.record-head.has-photo .badges{max-width:none;width:100%;justify-content:flex-start}}
+.manual-row .photo-thumb{margin-right:-2px}
+.manual-row .who{flex:1}
+/* Still inside list */
+.inside-gallery{border:1px solid #cfe2d5;border-radius:14px;padding:0 16px;margin:0 0 18px;background:#fff}
+.inside-gallery summary{cursor:pointer;font-weight:700;color:#215d47;padding:15px 0}
+.inside-gallery summary small{font-weight:400;color:#7c8b80;font-size:12px}
+.inside-gallery[open]{padding-bottom:16px}
+.gallery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}
+@media(max-width:380px){.gallery-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.gallery-tile{display:flex;flex-direction:column;gap:3px;border:1px solid #dce9dc;border-radius:12px;padding:8px;background:#fafcf9;min-width:0}
+.gallery-tile.is-long{border-color:#e3c48d;background:#fffaf1}
+.gallery-tile .photo-thumb{margin-bottom:5px}
+.gallery-tile .photo-thumb.empty{font-size:12px}
+.gallery-tile strong{font-size:13px;color:#173c32;overflow-wrap:anywhere;line-height:1.3}
+.gallery-tile small{font-size:11px;color:#6a7d72;overflow-wrap:anywhere}
+/* Take Photo screen + face check-in preview */
+.photo-preview[hidden]{display:none}
+.photo-preview img,.face-photo{display:block;width:min(100%,240px);aspect-ratio:4/5;object-fit:cover;margin:0 auto 10px;border-radius:14px;border:1px solid #d3e1d6}
+.face-choice-photo{width:64px;aspect-ratio:4/5;object-fit:cover;border-radius:8px;margin-bottom:6px}
+/* Photo viewer */
+.photo-view{z-index:60}
+.photo-view-sheet{text-align:center}
+.photo-view-sheet img{display:block;width:min(100%,300px);aspect-ratio:4/5;object-fit:cover;margin:0 auto 14px;border-radius:16px;border:1px solid #d3e1d6;background:#eef5ee}
+.photo-view-sheet h2{margin:0 0 6px;overflow-wrap:anywhere}
+/* Visitor form notice */
+.photo-notice{margin:12px 0 6px}
+.photo-notice strong{display:block}

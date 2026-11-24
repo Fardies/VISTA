@@ -26,12 +26,12 @@ const isLocalMode = FACE_MODE === 'local';
 /** Visitor fields shown on the check-out screen. */
 function publicVisit(v) {
   const inAt = toDate(v.inAt);
-  return { id: v.id, name: v.name, phone: v.phone || '', purpose: v.purpose, car: v.car, inAt: inAt ? inAt.toISOString() : null };
+  return { id: v.id, name: v.name, purpose: v.purpose, car: v.car, inAt: inAt ? inAt.toISOString() : null };
 }
 
 /** The two backends do the same 4 jobs; the screens below do not care which one runs. */
 const faceBackend = isLocalMode ? {
-  async enroll(v, scan) {
+  async enroll(v, scan, photo) {
     const inside = new Set(visits.filter((x) => state(x) === 'in').map((x) => x.id));
     // A face that looks like someone still inside: the guard decides (same person or e.g. a twin)
     const near = FaceLocal.similar(scan, inside);
@@ -44,11 +44,12 @@ const faceBackend = isLocalMode ? {
       e.score = near.score;
       throw e;
     }
-    // One batch = the face template and the check-in are saved together (both or neither),
-    // so a visitor is never marked inside without a template, or the other way round.
+    // One batch = the face template, the photo and the check-in are saved together (all or
+    // nothing), so a visitor is never marked inside without them, or the other way round.
     const batch = vistaDb.batch();
     FaceLocal.queueSave(batch, v.id, scan.embedding, scan.samples || scan.embeddings || []);
     batch.update(visitRef(v), { status: 'in', inAt: serverTime(), checkInMethod: 'face-local' });
+    VistaPhoto.queueSave(batch, v.id, photo);
     await batch.commit();
     FaceLocal.log({ event: 'check-in', visitor: v.name, result: 'saved', ...scan.quality });
   },
@@ -69,10 +70,11 @@ const faceBackend = isLocalMode ? {
     return { status: r.status, score: r.best, second: r.second, visit: publicVisit(v) };
   },
   async confirmOut(m) {
-    // Check-out and deleting the face template are one batch (both or neither).
+    // Check-out, deleting the face template and deleting the photo are one batch (all or nothing).
     const batch = vistaDb.batch();
     batch.update(visitRef({ id: m.visit.id }), { status: 'out', outAt: serverTime(), checkOutMethod: 'face-local' });
     FaceLocal.queueDelete(batch, m.visit.id);
+    VistaPhoto.queueDelete(batch, m.visit.id);
     await batch.commit();
     FaceLocal.forgetLocal(m.visit.id);
     FaceLocal.log({ event: 'check-out confirmed', visitor: m.visit.name, result: 'correct person', best: m.score, second: m.second });
@@ -87,9 +89,15 @@ const faceBackend = isLocalMode ? {
     });
   },
 } : {
-  enroll: (v, scan) => callFace('faceEnrollCheckIn', { visitId: v.id, embedding: scan.embedding, quality: scan.quality }),
+  async enroll(v, scan, photo) {
+    await callFace('faceEnrollCheckIn', { visitId: v.id, embedding: scan.embedding, quality: scan.quality });
+    await VistaPhoto.save(v.id, photo); // the visit is now "in", so the photo rule allows it
+  },
   match: (scan) => callFace('faceMatchCheckOut', { embedding: scan.embedding, quality: scan.quality }),
-  confirmOut: (m) => callFace('faceConfirmCheckOut', { visitId: m.visit.id, token: m.token }),
+  async confirmOut(m) {
+    await callFace('faceConfirmCheckOut', { visitId: m.visit.id, token: m.token });
+    VistaPhoto.remove(m.visit.id).catch(() => {}); // clean-up removes it later if this fails
+  },
   rejected() {},
   release(v) {
     if (!v.faceEnrolled) return;
@@ -112,6 +120,7 @@ const faceUI = {
   mode: null,        // 'checkin' | 'checkout'
   visit: null,       // check-in target, or matched visitor at check-out
   scan: null,        // { embedding, samples, quality } — kept only until confirm/close
+  photo: '',         // visitor photo taken at face check-in (saved with the check-in)
   match: null,       // { visit, score, token }
   abort: null,       // AbortController of the running scan
   scanId: 0,         // increases on every start/stop, so late results of an old scan are ignored
@@ -158,7 +167,7 @@ function faceActions(...buttons) { fEl('face-actions').replaceChildren(...button
 function detailsList(v, extra = []) {
   const box = document.createElement('div');
   box.className = 'details-card face-details';
-  const rows = [['Name', v.name], ['Phone', v.phone || '-'], ['Purpose', v.purpose || '-'], ['Car Plate', v.car || '-'], ...extra];
+  const rows = [['Name', v.name], ['Purpose', v.purpose || '-'], ['Car Plate', v.car || '-'], ...extra];
   for (const [k, val] of rows) {
     const d = document.createElement('div');
     const s = document.createElement('span'); s.textContent = k;
@@ -171,7 +180,7 @@ function detailsList(v, extra = []) {
 
 function openFaceModal(mode, v = null) {
   if (!authorized) return;
-  Object.assign(faceUI, { mode, visit: v, scan: null, match: null });
+  Object.assign(faceUI, { mode, visit: v, scan: null, match: null, photo: '' });
   fEl('face-title').textContent = mode === 'checkin' ? 'Face Check-In' : 'Face Check-Out';
   fEl('face-step').textContent = 'Step 1 of 2';
   faceSetError('');
@@ -207,7 +216,7 @@ function stopScan() {
 
 function closeFaceModal() {
   stopScan();
-  Object.assign(faceUI, { mode: null, visit: null, scan: null, match: null });
+  Object.assign(faceUI, { mode: null, visit: null, scan: null, match: null, photo: '' });
   fEl('face-modal').hidden = true;
   document.body.classList.remove('modal-open');
 }
@@ -268,6 +277,7 @@ async function startFaceScan() {
   faceSetError('');
   faceUI.scan = null;
   faceUI.match = null;
+  faceUI.photo = '';
   fEl('face-result').hidden = true;
   fEl('face-visitor').hidden = true; // keep the camera on screen while scanning
   fEl('face-camera').hidden = false;
@@ -287,6 +297,8 @@ async function startFaceScan() {
     const scan = await VistaFace.capture(video, { onStatus: (t, p) => current() && faceStatus(t, p), signal: ctrl.signal });
     if (!current()) return;
     scanBeep(); // face captured: tells the guard to look at the screen
+    // Check-in: take the visitor photo from the same camera frame, centred on the face
+    faceUI.photo = faceUI.mode === 'checkin' ? VistaPhoto.fromVideo(video, scan.box) : '';
     VistaFace.stopCamera(video);
     faceUI.abort = null;
     faceUI.scan = scan;
@@ -321,8 +333,20 @@ function showCheckInReview() {
   const ok = document.createElement('p');
   ok.className = 'face-ok';
   ok.textContent = '✓ Face captured';
-  box.append(ok, qualityLine(scan.quality));
-  const confirmBtn = faceButton('Confirm Check-In', 'primary', confirmFaceCheckIn);
+  box.append(ok);
+  if (faceUI.photo) {
+    const pic = document.createElement('img');
+    pic.className = 'face-photo';
+    pic.src = faceUI.photo;
+    pic.alt = 'Photo that will be saved';
+    const cap = document.createElement('p');
+    cap.className = 'face-quality face-center';
+    cap.textContent = 'This photo will be saved for guards.';
+    box.append(pic, cap);
+  }
+  box.append(qualityLine(scan.quality));
+  const confirmBtn = faceButton('Confirm Check-In', 'primary', confirmFaceCheckIn, !faceUI.photo);
+  if (!faceUI.photo) faceSetError('Photo could not be taken. Press Scan Again.');
   box.hidden = false;
   faceActions(confirmBtn, faceButton('Scan Again', 'secondary', startFaceScan), faceButton('Manual Check In', 'secondary', manualFromModal));
 }
@@ -333,8 +357,9 @@ async function confirmFaceCheckIn(e) {
   btn.textContent = 'Saving…';
   faceSetError('');
   try {
-    await faceBackend.enroll(faceUI.visit, faceUI.scan);
+    await faceBackend.enroll(faceUI.visit, faceUI.scan, faceUI.photo);
     faceUI.scan = null;
+    faceUI.photo = '';
     faceDone(`✓ ${faceUI.visit.name} checked in`);
   } catch (err) {
     if (err.code === 'similar-face') { showSimilarFace(err.other, err.score); return; }
@@ -359,6 +384,7 @@ async function confirmFaceCheckIn(e) {
 function showSimilarFace(other, score) {
   const v = faceUI.visit;
   faceUI.scan = null;
+  faceUI.photo = '';
   fEl('face-step').textContent = 'Check';
   fEl('face-visitor').hidden = true; // the visitor's name is in the message below: keeps the screen short
   const box = fEl('face-result');
@@ -377,12 +403,12 @@ function showSimilarFace(other, score) {
   faceActions(
     faceButton('Scan Again', 'primary', startFaceScan),
     faceButton('Check In Manually', 'secondary', async () => {
-      if (!confirm(`Check in ${v.name} manually?\n\nNo face data will be saved, so check-out will also be manual.`)) return;
+      if (!confirm(`Check in ${v.name} manually?\n\nNo face data will be saved, so check-out will also be manual. Next, take the visitor's photo.`)) return;
+      closeFaceModal();
       try {
-        await checkInVisit(v); // manual: no face saved for this visitor
-        FaceLocal.log({ event: 'similar face: manual check-in', visitor: v.name, result: other.name });
-        faceDone(`✓ ${v.name} checked in (manual)`);
-      } catch (err) { faceSetError(`Could not check in: ${err.message}`); }
+        // manual: no face template for this visitor, but a photo is still required
+        if (await manualCheckIn(v)) FaceLocal.log({ event: 'similar face: manual check-in', visitor: v.name, result: other.name });
+      } catch (err) { alert(`Could not check in: ${err.message}`); }
     }),
     faceButton('Close', 'secondary', () => {
       FaceLocal.log({ event: 'similar face: same person, not checked in', visitor: v.name, result: other.name });
@@ -404,17 +430,26 @@ function choiceCard(v, note = '', display = false) {
   const inAt = v.inAt ? (v.inAt instanceof Date ? v.inAt : toDate(v.inAt) || new Date(v.inAt)) : null;
   const meta = document.createElement('span');
   meta.textContent = [v.purpose, inAt ? `In ${fmt.time(inAt)}` : '', note].filter(Boolean).join(' · ');
+  // Photo helps the guard pick the right person (inside a button: picture only, no zoom)
+  const img = VistaPhoto.get(v.id);
+  if (img) {
+    const pic = document.createElement('img');
+    pic.className = 'face-choice-photo';
+    pic.src = img;
+    pic.alt = '';
+    card.append(pic);
+  }
   card.append(name, meta);
   return card;
 }
 
 async function manualFromModal() {
   const v = faceUI.visit;
-  if (!v || !confirm(`Check in ${v.name} manually?`)) return;
+  if (!v || !confirm(`Check in ${v.name} manually?\nNext, take the visitor's photo.`)) return;
+  closeFaceModal(); // the Take Photo screen opens next
   try {
-    await checkInVisit(v);
-    faceDone(`✓ ${v.name} checked in`);
-  } catch (err) { faceSetError(`Could not check in: ${err.message}`); }
+    await manualCheckIn(v);
+  } catch (err) { alert(`Could not check in: ${err.message}`); }
 }
 
 // ---------- Check-out ----------
@@ -472,7 +507,10 @@ async function findCheckOutMatch() {
   lead.className = 'face-lead';
   lead.textContent = 'Is this the person?';
   const inAt = v.inAt ? new Date(v.inAt) : null;
-  box.append(lead, detailsList(v, [
+  box.append(lead);
+  const pic = VistaPhoto.thumb(v, { size: 'xl', showEmpty: false });
+  if (pic) box.append(pic);
+  box.append(detailsList(v, [
     ['Checked In', inAt ? fmt.time(inAt) : '-'],
     ['Inside For', inAt ? fmt.duration(Date.now() - inAt.getTime()) : '-'],
   ]));
@@ -575,7 +613,7 @@ fEl('face-flip').addEventListener('click', async () => {
 });
 fEl('scan-checkout').addEventListener('click', () => openFaceModal('checkout'));
 
-if (isLocalMode) fEl('face-note').textContent = 'No photo saved. Face data is shared with signed-in guards only and deleted at check-out.';
+if (isLocalMode) fEl('face-note').textContent = 'A photo is saved at check-in. Photo and face data are shared with signed-in guards only and deleted at check-out.';
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !fEl('face-modal').hidden) closeFaceModal(); });
 // Phones stop the camera when the browser goes to the background; cancel cleanly.
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && faceUI.abort) cancelScan(); });

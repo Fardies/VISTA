@@ -7,6 +7,7 @@ const EXCELJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/excelj
 const $ = (id) => document.getElementById(id);
 let visits = [], unsubscribe = null, authorized = false, refreshTimer = null;
 let showEarlier = false; // show visitors from earlier days who are still inside
+let visitsLoaded = false; // first visits snapshot received (photo clean-up waits for it)
 
 const setError = (id, msg) => { $(id).textContent = msg; $(id).hidden = !msg; };
 const squash = (s) => String(s || '').toLowerCase().replace(/\s+/g, '');
@@ -72,7 +73,7 @@ function filtered(list = dateScoped()) {
   const status = $('status').value;
   return list.filter((v) => {
     // spaces ignored, so "taa1234" finds "TAA 1234"
-    if (term && !squash(`${v.name} ${v.car} ${v.purpose} ${v.phone || ''}`).includes(term)) return false;
+    if (term && !squash(`${v.name} ${v.car} ${v.purpose}`).includes(term)) return false;
     if (status === 'all') return state(v) !== 'cancelled'; // cancelled registrations show only when chosen
     return state(v) === STATUS_MAP[status];
   }).sort(byNewest);
@@ -107,7 +108,8 @@ function actionButton(label, cls, confirmText, action) {
     if (!confirm(confirmText())) return;
     btn.disabled = true;
     try {
-      await action();
+      // An action returns false when the guard stopped half-way (e.g. Cancel on the photo screen)
+      if (await action() === false) btn.disabled = false;
     } catch (e) {
       alert(`Unable to complete this action: ${e.message}`);
       btn.disabled = false;
@@ -139,9 +141,12 @@ function buildCard(v, now) {
   const faceOut = String(v.checkOutMethod || '').startsWith('face');
   // One label for any visit that used the face scan (check-in, check-out or both)
   if (st !== 'pending' && (faceIn || faceOut)) tags.append(badge('Face check-in', 'guard'));
+  // Photo: shown while the visitor is inside ("No photo" if missing). Removed at check-out.
+  const pic = st === 'in' ? VistaPhoto.thumb(v) : VistaPhoto.thumb(v, { showEmpty: false });
+  if (pic) { head.classList.add('has-photo'); head.append(pic); }
   head.append(h, tags);
 
-  card.append(head, row('Purpose of Visit', v.purpose || '—'), row('Phone Number', v.phone || '—', 'mono'), row('Car Plate Number', v.car || '—', 'mono'));
+  card.append(head, row('Purpose of Visit', v.purpose || '—'), row('Car Plate Number', v.car || '—', 'mono'));
 
   if (st === 'pending' || st === 'cancelled') {
     card.append(row('Registered', `${fmt.time(v.createdAt) || '—'} · ${fmt.date(v.createdAt)}`));
@@ -175,8 +180,8 @@ function buildCard(v, now) {
     }
     card.append(
       actionButton(v.faceConsent ? 'Manual Check In' : 'Check In', v.faceConsent ? 'secondary' : 'primary',
-        () => `Check in ${v.name}?\nCheck-in time will be recorded as now (${fmt.time(new Date())}).`,
-        () => checkInVisit(v)),
+        () => `Check in ${v.name}?\nNext, take the visitor's photo. Check-in time will be recorded when the photo is saved.`,
+        () => manualCheckIn(v)),
       actionButton('Cancel Registration', 'secondary',
         () => `Cancel the registration for ${v.name}?\nThis visitor will not be checked in.`,
         () => cancelVisit(v)),
@@ -226,7 +231,7 @@ function renderManualOut(now) {
     const inside = document.createElement('small');
     inside.textContent = `In ${fmt.time(v.inAt) || '—'} · Inside for ${fmt.duration(ms)}`;
     who.append(name, meta, inside);
-    rowEl.append(who, actionButton('Check Out', 'secondary btn-small',
+    rowEl.append(VistaPhoto.thumb(v, { size: 'sm' }), who, actionButton('Check Out', 'secondary btn-small',
       () => `Confirm that ${v.name} has left the premises?\nCheck-out time will be recorded as now (${fmt.time(new Date())}).`,
       () => checkOutVisit(v)));
     box.append(rowEl);
@@ -234,6 +239,32 @@ function renderManualOut(now) {
   const more = $('manual-out-more');
   more.hidden = list.length <= MANUAL_OUT_LIMIT;
   more.textContent = showAllManualOut ? 'Show fewer' : `Show all (${list.length})`;
+}
+
+/** Records tab: everyone still inside (any day) with their photo, so guards can find them. */
+function renderInsideGallery(now) {
+  const list = visits.filter((v) => state(v) === 'in').sort((a, b) => (toDate(a.inAt) || 0) - (toDate(b.inAt) || 0));
+  $('inside-gallery').hidden = !list.length;
+  const grid = $('inside-gallery-grid');
+  grid.replaceChildren();
+  if (!list.length) return;
+  const missing = list.filter((v) => !VistaPhoto.has(v.id)).length;
+  $('inside-gallery-title').textContent = `Still inside · ${list.length} visitor${list.length === 1 ? '' : 's'}`;
+  $('inside-gallery-hint').textContent = VistaPhoto.problem()
+    || `Everyone still checked in (all days). Tap a photo to see it bigger.${missing ? ` ${missing} without a photo (checked in before photos, or over ${VistaPhoto.RETENTION_DAYS} days).` : ''}`;
+  for (const v of list) {
+    const ms = stayMs(v, now);
+    const tile = document.createElement('article');
+    tile.className = `gallery-tile${ms != null && ms > LONG_STAY_HOURS * 3600e3 ? ' is-long' : ''}`;
+    const name = document.createElement('strong');
+    name.textContent = v.name;
+    const meta = document.createElement('small');
+    meta.textContent = `In ${fmt.time(v.inAt) || '—'} · ${fmt.duration(ms)}`;
+    const purpose = document.createElement('small');
+    purpose.textContent = [v.purpose, v.car].filter(Boolean).join(' · ');
+    tile.append(VistaPhoto.thumb(v, { size: 'lg' }), name, meta, purpose);
+    grid.append(tile);
+  }
 }
 
 function render() {
@@ -281,6 +312,7 @@ function render() {
     for (const v of queue) pl.append(buildCard(v, now));
   }
   renderManualOut(now);
+  renderInsideGallery(now);
 
   // Visitor Records section
   const status = $('status').value;
@@ -307,8 +339,25 @@ const serverTime = () => firebase.firestore.FieldValue.serverTimestamp();
 
 // Face check-in/check-out use Cloud Functions (face-scanner.js); these are the manual paths.
 
-/** Pending Check-In -> Checked In (manual). The check-in time is recorded by the server. */
-async function checkInVisit(v) { await visitRef(v).update({ status: 'in', inAt: serverTime(), checkInMethod: 'manual' }); }
+/**
+ * Pending Check-In -> Checked In (manual). The check-in time is recorded by the server.
+ * The photo is saved in the same batch: both are saved, or neither.
+ */
+async function checkInVisit(v, photo) {
+  if (!photo) throw new Error('A photo is required for check-in.');
+  const batch = vistaDb.batch();
+  batch.update(visitRef(v), { status: 'in', inAt: serverTime(), checkInMethod: 'manual' });
+  VistaPhoto.queueSave(batch, v.id, photo);
+  await batch.commit();
+}
+
+/** Manual check-in: take the photo first, then check in. Returns false if the guard cancelled. */
+async function manualCheckIn(v) {
+  const photo = await VistaPhoto.take(v.name, 'Check-In Photo');
+  if (!photo) return false;
+  await checkInVisit(v, photo);
+  return true;
+}
 
 /** Pending Check-In -> Cancelled (visitor did not arrive, or registered by mistake). */
 async function cancelVisit(v) {
@@ -316,9 +365,12 @@ async function cancelVisit(v) {
   if (window.releaseFaceTemplate) window.releaseFaceTemplate(v);
 }
 
-/** Checked In -> Checked Out (manual). Also deletes the visitor's face template, if any. */
+/** Checked In -> Checked Out (manual). Deletes the visitor's photo (same batch) and face template, if any. */
 async function checkOutVisit(v) {
-  await visitRef(v).update({ status: 'out', outAt: serverTime(), checkOutMethod: 'manual' });
+  const batch = vistaDb.batch();
+  batch.update(visitRef(v), { status: 'out', outAt: serverTime(), checkOutMethod: 'manual' });
+  VistaPhoto.queueDelete(batch, v.id);
+  await batch.commit();
   if (window.releaseFaceTemplate) window.releaseFaceTemplate(v);
 }
 
@@ -423,13 +475,19 @@ function checkOutType(v) {
   return String(v.checkOutMethod || '').startsWith('face') ? 'Face' : 'Manual';
 }
 
+/** Text in the Photo column when there is no picture to show. */
+function photoNote(v) {
+  if (VistaPhoto.has(v.id)) return '';
+  if (v.outAt) return 'Photo removed (checked out)';
+  return 'No photo';
+}
+
 function reportRows(list, now) {
   return list.map((v, i) => {
     const ms = stayMs(v, now);
     return {
       no: i + 1,
       name: v.name,
-      phone: v.phone || '—',
       purpose: v.purpose || '',
       car: v.car || '—',
       inDate: fmt.date(v.inAt),
@@ -440,6 +498,7 @@ function reportRows(list, now) {
       status: v.outAt ? 'Checked Out' : 'Inside',
       entry: entryType(v),
       checkOutBy: checkOutType(v),
+      photo: photoNote(v),
     };
   });
 }
@@ -483,12 +542,14 @@ async function buildXlsx(list) {
   });
 
   const cols = [
-    ['No.', 'no', 6], ['Visitor Name', 'name', 30], ['Phone No.', 'phone', 16], ['Purpose of Visit', 'purpose', 24], ['Car Plate', 'car', 13],
+    ['No.', 'no', 6], ['Visitor Name', 'name', 30], ['Purpose of Visit', 'purpose', 24], ['Car Plate', 'car', 13],
     ['Check-In Date', 'inDate', 14], ['Check-In Time', 'inTime', 13], ['Check-Out Date', 'outDate', 14], ['Check-Out Time', 'outTime', 14],
     ['Time on Site', 'stay', 17], ['Status', 'status', 14], ['Entry Type', 'entry', 26], ['Check-Out', 'checkOutBy', 14],
+    ['Photo', 'photo', 16],
   ];
+  const PHOTO_COL = cols.length - 1; // last column (0-based), M
   ws.columns = cols.map(([, key, width]) => ({ key, width }));
-  const last = String.fromCharCode(64 + cols.length); // M
+  const last = String.fromCharCode(64 + cols.length); // L
 
   // Title block
   ws.mergeCells(`A1:${last}1`);
@@ -552,14 +613,22 @@ async function buildXlsx(list) {
   });
 
   // Data rows
-  const center = new Set(['no', 'phone', 'car', 'inDate', 'inTime', 'outDate', 'outTime', 'stay', 'status', 'checkOutBy']);
+  const center = new Set(['no', 'car', 'inDate', 'inTime', 'outDate', 'outTime', 'stay', 'status', 'checkOutBy', 'photo']);
   rows.forEach((data, i) => {
     const r = ws.getRow(HEADER + 1 + i);
     cols.forEach(([, key], c) => { r.getCell(c + 1).value = data[key]; });
-    r.height = 20;
+    // Visitors still inside: their photo is placed in the Photo cell
+    const img = VistaPhoto.get(list[i].id);
+    if (img) {
+      const imageId = wb.addImage({ base64: img.replace(/^data:image\/\w+;base64,/, ''), extension: 'jpeg' });
+      ws.addImage(imageId, { tl: { col: PHOTO_COL + 0.25, row: HEADER + i + 0.06 }, ext: { width: 48, height: 60 }, editAs: 'oneCell' });
+      r.height = 50;
+    } else {
+      r.height = 20;
+    }
     r.eachCell({ includeEmpty: true }, (cell, colNo) => {
       const key = cols[colNo - 1][1];
-      cell.font = { size: 10.5, color: { argb: 'FF20372F' }, bold: key === 'name' };
+      cell.font = key === 'photo' ? { size: 9, italic: true, color: { argb: C.grey } } : { size: 10.5, color: { argb: 'FF20372F' }, bold: key === 'name' };
       cell.alignment = { vertical: 'middle', horizontal: center.has(key) ? 'center' : 'left', indent: center.has(key) ? 0 : 1 };
       cell.border = { bottom: { style: 'thin', color: { argb: C.line } }, left: { style: 'thin', color: { argb: C.line } }, right: { style: 'thin', color: { argb: C.line } } };
       if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.zebra } };
@@ -575,7 +644,7 @@ async function buildXlsx(list) {
   // Closing note
   const endRow = HEADER + rows.length + 2;
   ws.mergeCells(`A${endRow}:${last}${endRow}`);
-  ws.getCell(`A${endRow}`).value = `End of report · ${rows.length} record${rows.length === 1 ? '' : 's'} · Times shown in Malaysia time (GMT+8) · Confidential: contains personal data, handle in accordance with PDPA 2010.`;
+  ws.getCell(`A${endRow}`).value = `End of report · ${rows.length} record${rows.length === 1 ? '' : 's'} · Times shown in Malaysia time (GMT+8) · Confidential: contains personal data and visitor photos, handle in accordance with PDPA 2010. Delete this file when no longer needed.`;
   ws.getCell(`A${endRow}`).font = { italic: true, size: 9, color: { argb: C.grey } };
 
   const buf = await wb.xlsx.writeBuffer();
@@ -591,8 +660,8 @@ function buildCsv(list) {
     ['VISTA - VISITOR REPORT'], ['Visitor Information & Smart Tracking Application'], [],
     ['Report Period', periodLabel()], ['Generated On', `${fmt.longDate(now)}, ${fmt.time(now)}`],
     ['Total Visits', sum.total], ['Currently Inside', sum.inside], ['Checked Out', sum.out], ['Average Time on Site', sum.avg], [],
-    ['No.', 'Visitor Name', 'Phone No.', 'Purpose of Visit', 'Car Plate', 'Check-In Date', 'Check-In Time', 'Check-Out Date', 'Check-Out Time', 'Time on Site', 'Status', 'Entry Type', 'Check-Out'],
-    ...reportRows(list, now).map((r) => [r.no, r.name, r.phone, r.purpose, r.car, r.inDate, r.inTime, r.outDate, r.outTime, r.stay, r.status, r.entry, r.checkOutBy]),
+    ['No.', 'Visitor Name', 'Purpose of Visit', 'Car Plate', 'Check-In Date', 'Check-In Time', 'Check-Out Date', 'Check-Out Time', 'Time on Site', 'Status', 'Entry Type', 'Check-Out', 'Photo'],
+    ...reportRows(list, now).map((r) => [r.no, r.name, r.purpose, r.car, r.inDate, r.inTime, r.outDate, r.outTime, r.stay, r.status, r.entry, r.checkOutBy, r.photo || 'In Excel file only']),
   ];
   return new Blob([`\uFEFF${lines.map((l) => l.map(cell).join(',')).join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
 }
@@ -649,11 +718,10 @@ $('tab-records-btn').addEventListener('click', () => showTab('records'));
 $('tab-scanner-btn').addEventListener('click', () => showTab('scanner'));
 
 // ---------- Walk-in check-in by guard ----------
-const mPurpose = $('manual-purpose'), mOther = $('manual-other'), mOtherWrap = $('manual-other-wrap'), mName = $('manual-name'), mCar = $('manual-car'), mPhone = $('manual-phone');
+const mPurpose = $('manual-purpose'), mOther = $('manual-other'), mOtherWrap = $('manual-other-wrap'), mName = $('manual-name'), mCar = $('manual-car');
 let manualBusy = false;
 mPurpose.addEventListener('change', () => { mOtherWrap.hidden = mPurpose.value !== 'Other'; mOther.required = mPurpose.value === 'Other'; if (!mOther.required) mOther.value = ''; });
 mName.addEventListener('blur', () => { mName.value = clean.name(mName.value); });
-mPhone.addEventListener('blur', () => { mPhone.value = clean.phone(mPhone.value); });
 mCar.addEventListener('input', () => { mCar.value = clean.plate(mCar.value); });
 
 $('manual-form').addEventListener('submit', async (e) => {
@@ -668,12 +736,9 @@ $('manual-form').addEventListener('submit', async (e) => {
   const name = clean.name(mName.value);
   const p = clean.purpose(mPurpose.value === 'Other' ? mOther.value : mPurpose.value);
   const car = clean.plate(mCar.value);
-  const phone = clean.phone(mPhone.value); // optional for walk-ins
   mName.value = name;
-  mPhone.value = phone;
   mCar.value = car;
   const problem = clean.nameError(name)
-    || clean.phoneError(phone)
     || (!mPurpose.value ? 'Please select the purpose of visit.' : '')
     || (mPurpose.value === 'Other' && p.length < 3 ? 'Please describe the purpose (at least 3 characters).' : '')
     || clean.plateError(car);
@@ -682,12 +747,17 @@ $('manual-form').addEventListener('submit', async (e) => {
   manualBusy = true;
   const btn = $('manual-submit');
   btn.disabled = true;
-  btn.textContent = 'Saving…';
+  btn.textContent = 'Taking photo…';
   try {
+    // Photo first (required). Cancel = nothing is saved.
+    const photo = await VistaPhoto.take(name, 'Walk-in Photo');
+    if (!photo) { setError('manual-error', 'A photo is required. Press the button again to take it.'); return; }
+    btn.textContent = 'Saving…';
+    // The visit and its photo are saved together (both or neither)
+    const batch = vistaDb.batch();
     const doc = vistaDb.collection('visits').doc();
-    await doc.set({
+    batch.set(doc, {
       ownerUid: user.uid, name, purpose: p, car,
-      ...(phone ? { phone } : {}),
       status: 'in',
       createdAt: serverTime(),
       inAt: serverTime(),
@@ -695,6 +765,8 @@ $('manual-form').addEventListener('submit', async (e) => {
       faceConsent: false,
       checkInMethod: 'walk-in'
     });
+    VistaPhoto.queueSave(batch, doc.id, photo);
+    await batch.commit();
     form.reset();
     mOtherWrap.hidden = true;
     mOther.required = false;
@@ -705,7 +777,7 @@ $('manual-form').addEventListener('submit', async (e) => {
   } finally {
     manualBusy = false;
     btn.disabled = false;
-    btn.textContent = 'Save Walk-in Check-In';
+    btn.textContent = 'Take Photo & Check In';
   }
 });
 
@@ -714,11 +786,14 @@ function subscribe() {
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
   unsubscribe = vistaDb.collection('visits').onSnapshot((snapshot) => {
     visits = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data({ serverTimestamps: 'estimate' }) }));
+    visitsLoaded = true;
     setError('dashboard-error', '');
+    photoCleanup();
     render();
     refreshExportCount();
   }, (err) => {
     visits = [];
+    visitsLoaded = false;
     render();
     setError('dashboard-error', err.code === 'permission-denied'
       ? 'Database access denied. Publish the included firestore.rules in Firebase Console → Firestore Database → Rules, then refresh.'
@@ -731,8 +806,11 @@ function subscribe() {
 
 function showLogin() {
   closeExport();
+  VistaPhoto.close();
+  VistaPhoto.disconnect();
   authorized = false;
   visits = [];
+  visitsLoaded = false;
   clearInterval(refreshTimer);
   render();
   if (unsubscribe) { unsubscribe(); unsubscribe = null; }
@@ -751,8 +829,19 @@ function showDashboard(user) {
   $('signed-in-as').textContent = user.email || 'Operator';
   $('operator-login').hidden = true;
   $('operator-dashboard').hidden = false;
+  VistaPhoto.connect(vistaDb, () => { photoCleanup(); render(); refreshExportCount(); });
   subscribe();
 }
+
+// ---------- Photo clean-up (Spark has no server timer, so the guard app does it) ----------
+// Deletes photos older than 7 days, and photos of visitors already checked out or cancelled
+// (for example a delete that failed earlier). Only acts on proof: the visit must be loaded.
+function photoCleanup() {
+  if (!authorized || !visitsLoaded) return;
+  const done = new Set(visits.filter((x) => ['out', 'cancelled'].includes(state(x))).map((x) => x.id));
+  VistaPhoto.purge((id) => done.has(id)).catch(() => {});
+}
+setInterval(photoCleanup, 60000);
 
 $('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
