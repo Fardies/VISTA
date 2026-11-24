@@ -1,5 +1,5 @@
 rules_version = '2';
-// VISTA Firestore security rules (face check-in version).
+// VISTA Firestore security rules (face check-in + visitor photo version).
 // Publish: Firebase Console > Firestore Database > Rules > paste > Publish,
 // or `firebase deploy --only firestore:rules`.
 //
@@ -124,6 +124,32 @@ service cloud.firestore {
       allow create, update: if isOperator()
         && exists(/databases/$(database)/documents/visits/$(visitId))
         && validTemplate(visitId);
+      allow delete: if isOperator();
+    }
+
+    // Visitor photos (one small JPEG per visit, stored as text, same id as the visit).
+    //  - Read / create / delete: ONLY the signed-in operator account. Visitors have no access.
+    //  - A photo can only be saved TOGETHER with the check-in (same batch): after the write,
+    //    the visit must exist and be "in". So every photo belongs to someone inside.
+    //  - Max 300,000 characters (about 300 KB); the app makes about 25-40 KB.
+    //  - It must carry an expiry of at most 7 days from now (8 allowed for phone clock slack).
+    //  - The guard app deletes it at check-out, or when it expires.
+    function validPhoto(visitId) {
+      let d = request.resource.data;
+      let visit = /databases/$(database)/documents/visits/$(visitId);
+      return d.keys().hasOnly(['img', 'takenAt', 'expiresAt'])
+        && d.keys().hasAll(['img', 'takenAt', 'expiresAt'])
+        && d.img is string && d.img.size() > 1000 && d.img.size() <= 300000
+        && d.takenAt == request.time
+        && d.expiresAt is timestamp
+        && d.expiresAt > request.time
+        && d.expiresAt <= request.time + duration.value(8, 'd')
+        && existsAfter(visit)
+        && getAfter(visit).data.get('status', null) == 'in';
+    }
+    match /visitorPhotos/{visitId} {
+      allow get, list: if isOperator();
+      allow create, update: if isOperator() && validPhoto(visitId);
       allow delete: if isOperator();
     }
 
