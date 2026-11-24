@@ -73,7 +73,7 @@ function filtered(list = dateScoped()) {
   const status = $('status').value;
   return list.filter((v) => {
     // spaces ignored, so "taa1234" finds "TAA 1234"
-    if (term && !squash(`${v.name} ${v.car} ${v.purpose}`).includes(term)) return false;
+    if (term && !squash(`${v.name} ${v.car} ${v.purpose} ${v.phone || ''}`).includes(term)) return false;
     if (status === 'all') return state(v) !== 'cancelled'; // cancelled registrations show only when chosen
     return state(v) === STATUS_MAP[status];
   }).sort(byNewest);
@@ -146,7 +146,7 @@ function buildCard(v, now) {
   if (pic) { head.classList.add('has-photo'); head.append(pic); }
   head.append(h, tags);
 
-  card.append(head, row('Purpose of Visit', v.purpose || '—'), row('Car Plate Number', v.car || '—', 'mono'));
+  card.append(head, row('Purpose of Visit', v.purpose || '—'), row('Phone Number', v.phone || '—', 'mono'), row('Car Plate Number', v.car || '—', 'mono'));
 
   if (st === 'pending' || st === 'cancelled') {
     card.append(row('Registered', `${fmt.time(v.createdAt) || '—'} · ${fmt.date(v.createdAt)}`));
@@ -488,6 +488,7 @@ function reportRows(list, now) {
     return {
       no: i + 1,
       name: v.name,
+      phone: v.phone || '—',
       purpose: v.purpose || '',
       car: v.car || '—',
       inDate: fmt.date(v.inAt),
@@ -542,14 +543,14 @@ async function buildXlsx(list) {
   });
 
   const cols = [
-    ['No.', 'no', 6], ['Visitor Name', 'name', 30], ['Purpose of Visit', 'purpose', 24], ['Car Plate', 'car', 13],
+    ['No.', 'no', 6], ['Visitor Name', 'name', 30], ['Phone No.', 'phone', 16], ['Purpose of Visit', 'purpose', 24], ['Car Plate', 'car', 13],
     ['Check-In Date', 'inDate', 14], ['Check-In Time', 'inTime', 13], ['Check-Out Date', 'outDate', 14], ['Check-Out Time', 'outTime', 14],
     ['Time on Site', 'stay', 17], ['Status', 'status', 14], ['Entry Type', 'entry', 26], ['Check-Out', 'checkOutBy', 14],
     ['Photo', 'photo', 16],
   ];
-  const PHOTO_COL = cols.length - 1; // last column (0-based), M
+  const PHOTO_COL = cols.length - 1; // last column (0-based), N
   ws.columns = cols.map(([, key, width]) => ({ key, width }));
-  const last = String.fromCharCode(64 + cols.length); // L
+  const last = String.fromCharCode(64 + cols.length); // N (14 columns)
 
   // Title block
   ws.mergeCells(`A1:${last}1`);
@@ -613,7 +614,7 @@ async function buildXlsx(list) {
   });
 
   // Data rows
-  const center = new Set(['no', 'car', 'inDate', 'inTime', 'outDate', 'outTime', 'stay', 'status', 'checkOutBy', 'photo']);
+  const center = new Set(['no', 'phone', 'car', 'inDate', 'inTime', 'outDate', 'outTime', 'stay', 'status', 'checkOutBy', 'photo']);
   rows.forEach((data, i) => {
     const r = ws.getRow(HEADER + 1 + i);
     cols.forEach(([, key], c) => { r.getCell(c + 1).value = data[key]; });
@@ -660,8 +661,8 @@ function buildCsv(list) {
     ['VISTA - VISITOR REPORT'], ['Visitor Information & Smart Tracking Application'], [],
     ['Report Period', periodLabel()], ['Generated On', `${fmt.longDate(now)}, ${fmt.time(now)}`],
     ['Total Visits', sum.total], ['Currently Inside', sum.inside], ['Checked Out', sum.out], ['Average Time on Site', sum.avg], [],
-    ['No.', 'Visitor Name', 'Purpose of Visit', 'Car Plate', 'Check-In Date', 'Check-In Time', 'Check-Out Date', 'Check-Out Time', 'Time on Site', 'Status', 'Entry Type', 'Check-Out', 'Photo'],
-    ...reportRows(list, now).map((r) => [r.no, r.name, r.purpose, r.car, r.inDate, r.inTime, r.outDate, r.outTime, r.stay, r.status, r.entry, r.checkOutBy, r.photo || 'In Excel file only']),
+    ['No.', 'Visitor Name', 'Phone No.', 'Purpose of Visit', 'Car Plate', 'Check-In Date', 'Check-In Time', 'Check-Out Date', 'Check-Out Time', 'Time on Site', 'Status', 'Entry Type', 'Check-Out', 'Photo'],
+    ...reportRows(list, now).map((r) => [r.no, r.name, r.phone, r.purpose, r.car, r.inDate, r.inTime, r.outDate, r.outTime, r.stay, r.status, r.entry, r.checkOutBy, r.photo || 'In Excel file only']),
   ];
   return new Blob([`\uFEFF${lines.map((l) => l.map(cell).join(',')).join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
 }
@@ -718,10 +719,11 @@ $('tab-records-btn').addEventListener('click', () => showTab('records'));
 $('tab-scanner-btn').addEventListener('click', () => showTab('scanner'));
 
 // ---------- Walk-in check-in by guard ----------
-const mPurpose = $('manual-purpose'), mOther = $('manual-other'), mOtherWrap = $('manual-other-wrap'), mName = $('manual-name'), mCar = $('manual-car');
+const mPurpose = $('manual-purpose'), mOther = $('manual-other'), mOtherWrap = $('manual-other-wrap'), mName = $('manual-name'), mCar = $('manual-car'), mPhone = $('manual-phone');
 let manualBusy = false;
 mPurpose.addEventListener('change', () => { mOtherWrap.hidden = mPurpose.value !== 'Other'; mOther.required = mPurpose.value === 'Other'; if (!mOther.required) mOther.value = ''; });
 mName.addEventListener('blur', () => { mName.value = clean.name(mName.value); });
+mPhone.addEventListener('blur', () => { mPhone.value = clean.phone(mPhone.value); });
 mCar.addEventListener('input', () => { mCar.value = clean.plate(mCar.value); });
 
 $('manual-form').addEventListener('submit', async (e) => {
@@ -736,9 +738,12 @@ $('manual-form').addEventListener('submit', async (e) => {
   const name = clean.name(mName.value);
   const p = clean.purpose(mPurpose.value === 'Other' ? mOther.value : mPurpose.value);
   const car = clean.plate(mCar.value);
+  const phone = clean.phone(mPhone.value); // optional for walk-ins
   mName.value = name;
+  mPhone.value = phone;
   mCar.value = car;
   const problem = clean.nameError(name)
+    || clean.phoneError(phone)
     || (!mPurpose.value ? 'Please select the purpose of visit.' : '')
     || (mPurpose.value === 'Other' && p.length < 3 ? 'Please describe the purpose (at least 3 characters).' : '')
     || clean.plateError(car);
@@ -758,6 +763,7 @@ $('manual-form').addEventListener('submit', async (e) => {
     const doc = vistaDb.collection('visits').doc();
     batch.set(doc, {
       ownerUid: user.uid, name, purpose: p, car,
+      ...(phone ? { phone } : {}),
       status: 'in',
       createdAt: serverTime(),
       inAt: serverTime(),

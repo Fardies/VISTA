@@ -23,7 +23,9 @@ service cloud.firestore {
     function validDetails(d) {
       return d.name is string && d.name.size() > 0 && d.name.size() <= 100
         && d.purpose is string && d.purpose.size() > 0 && d.purpose.size() <= 120
-        && d.car is string && d.car.size() <= 20;
+        && d.car is string && d.car.size() <= 20
+        // Phone number is optional: left out when empty, otherwise digits with an optional leading +
+        && (!('phone' in d) || (d.phone is string && d.phone.matches('[+]?[0-9]{9,15}')));
     }
     function changed() {
       return request.resource.data.diff(resource.data).affectedKeys();
@@ -41,7 +43,7 @@ service cloud.firestore {
 
       // 1. Visitor registration from the QR page: pending, no check-in time yet.
       allow create: if isVisitor()
-        && request.resource.data.keys().hasOnly(['ownerUid','name','purpose','car','status','createdAt','inAt','outAt','faceConsent'])
+        && request.resource.data.keys().hasOnly(['ownerUid','name','phone','purpose','car','status','createdAt','inAt','outAt','faceConsent'])
         && request.resource.data.keys().hasAll(['ownerUid','name','purpose','car','status','createdAt','inAt','outAt','faceConsent'])
         && request.resource.data.ownerUid == request.auth.uid
         && validDetails(request.resource.data)
@@ -53,7 +55,7 @@ service cloud.firestore {
 
       // 2. Walk-in visitor registered by the guard: checked in immediately, manual only.
       allow create: if isOperator()
-        && request.resource.data.keys().hasOnly(['ownerUid','name','purpose','car','status','createdAt','inAt','outAt','source','faceConsent','checkInMethod'])
+        && request.resource.data.keys().hasOnly(['ownerUid','name','phone','purpose','car','status','createdAt','inAt','outAt','source','faceConsent','checkInMethod'])
         && request.resource.data.keys().hasAll(['ownerUid','name','purpose','car','status','createdAt','inAt','outAt','source','faceConsent'])
         && request.resource.data.ownerUid == request.auth.uid
         && validDetails(request.resource.data)
